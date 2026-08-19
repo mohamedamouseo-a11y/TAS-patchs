@@ -1,0 +1,10 @@
+diff --git a/scripts/deploy-active-release.sh b/scripts/deploy-active-release.sh
+--- a/scripts/deploy-active-release.sh
++++ b/scripts/deploy-active-release.sh
+@@ -1,5 +1,6 @@
+ #!/usr/bin/env bash
+ set -Eeuo pipefail
+ umask 077
++# TAS_TYPECHECK_BASELINE_BOOTSTRAP_V36R2
+ 
+ ROOT="${APP_DEPLOY_ROOT:-/var/www/automotivecrm}"
