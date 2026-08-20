@@ -1,0 +1,117 @@
+TAS Vehicle Brand Central V2.3 — Baseline Reapproval Procedure
+
+PURPOSE
+Formally re-approve the CURRENT active TAS source for TypeScript baseline purposes without removing the confirmed Google Drive OAuth production enhancement, then leave Vehicle Brand V2 deployment for a separate run.
+
+DO NOT deploy Vehicle Brand V2 in this run.
+DO NOT modify application source directly.
+DO NOT modify database.
+DO NOT manually edit baseline cache.
+DO NOT manually restart PM2 or switch /current.
+
+EXPECTED ACTIVE RELEASE:
+/var/www/TAS-root/releases/20260819_163705_TAS-Excel-Import-Fix-V1.atomic.patch_
+
+CONFIRMED ACTIVE DRIFT FILE:
+server/services/tasGoogleDriveOAuthService.ts
+
+REQUIRED ACTIVE DRIFT SHA256:
+86477826b08c13457760e2352025b070507b3383a23c5f1bd7479bd91ee202b4
+
+BASELINE REAPPROVAL PATCH:
+TAS-Vehicle-Brand-Central-V2/TAS-TypeScript-Baseline-Reapproval-V36R3.atomic.patch
+
+EXPECTED PATCH SHA256:
+1b73ab7a4619dd6c8131641af4b1ff23c9545b09194d95c8c7fb41125f37aada
+
+1. Verify production health
+- exactly one TAS PM2 process online
+- readlink -f /var/www/TAS-root/current equals expected active release
+- resolved process cwd equals current realpath
+- HTTP 127.0.0.1:3600 = 200
+
+2. Verify drift remains exactly known
+sha256sum "$ACTIVE/server/services/tasGoogleDriveOAuthService.ts"
+Require exact:
+86477826b08c13457760e2352025b070507b3383a23c5f1bd7479bd91ee202b4
+Use trusted release-tree-integrity compare against the reconstructed expected Excel V1 tree and require DRIFT_PATH_COUNT=1 and only this path with CONTENT_SHA_CHANGED.
+If any second drift appears: STOP.
+
+3. Validate current active application BEFORE baseline reapproval
+Run current active TypeScript check with official memory envelope:
+MALLOC_ARENA_MAX=2 NODE_OPTIONS=--max-old-space-size=3072 node "$ACTIVE/node_modules/typescript/bin/tsc" --project "$ACTIVE/tsconfig.json" --noEmit --pretty false --incremental false
+Require normal completion (exit 0 or 2). Count diagnostics with the trusted gate/parser. Require ACTIVE_TYPESCRIPT_DIAGNOSTICS=915 and no abnormal exit.
+
+Run full tests from ACTIVE with official test memory envelope and require PASS.
+Run production build in a disposable copy of ACTIVE (not inside active release) using official build memory envelope and require PASS. Do not overwrite active dist/source.
+
+4. Verify reapproval patch
+Fetch latest patch repo branch. Verify patch SHA256 exactly:
+1b73ab7a4619dd6c8131641af4b1ff23c9545b09194d95c8c7fb41125f37aada
+Trusted patch-paths must return exactly:
+scripts/deploy-active-release.sh
+Patch dry-run against ACTIVE with --fuzz=0 --strip=1 must PASS with no offsets/rejects.
+Patch must only add marker:
+# TAS_TYPECHECK_BASELINE_REAPPROVAL_V36R3
+No other script/application change.
+
+5. Official baseline bootstrap deployment ONLY
+Use the official deploy script with bootstrap enabled and the exact infrastructure patch hash:
+APP_DEPLOY_ROOT=/var/www/TAS-root \
+PM2_APP_NAME=TAS \
+DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6 \
+DEPLOY_TYPECHECK_BASELINE_BOOTSTRAP=1 \
+DEPLOY_INFRA_UPGRADE_PATCH_SHA256=1b73ab7a4619dd6c8131641af4b1ff23c9545b09194d95c8c7fb41125f37aada \
+bash /var/www/TAS-root/current/scripts/deploy-active-release.sh \
+/var/www/TAS-root/.tas-vehicle-brand-v2/TAS-TypeScript-Baseline-Reapproval-V36R3.atomic.patch
+
+This bootstrap is allowed because patch paths are deployment-only and include scripts/deploy-active-release.sh.
+Do not use --prepared-candidate.
+Do not manually edit trust cache.
+
+6. Post-bootstrap requirements
+Require ATOMIC_DEPLOY=PASS, CANDIDATE_PROMOTED=YES, one TAS PM2 process online, HTTP 200, stability PASS, PM2 save PASS, current/running release match.
+Read the newly committed typecheck baseline cache metadata and verify:
+- baseline_root equals the new promoted release
+- source_manifest_sha256 equals trusted manifest SHA of that new release
+- typescript_sha256 equals promoted release compiler SHA
+- gate_sha256 remains trusted expected gate hash
+- baseline.exit is 0 or 2
+- baseline diagnostic count is 915
+
+7. Preserve Google Drive enhancement
+Verify promoted release server/services/tasGoogleDriveOAuthService.ts SHA256 is still exactly:
+86477826b08c13457760e2352025b070507b3383a23c5f1bd7479bd91ee202b4
+Require GOOGLE_DRIVE_DRIFT_PRESERVED=YES.
+
+8. STOP
+Do NOT deploy Vehicle Brand V2 in this run. Return report only.
+
+FINAL REPORT
+ACTIVE_BEFORE=
+KNOWN_DRIFT_SHA_MATCH=
+DRIFT_PATH_COUNT=
+DRIFT_ONLY_GOOGLE_DRIVE=
+ACTIVE_TYPECHECK_EXIT=
+ACTIVE_TYPESCRIPT_DIAGNOSTICS=
+ACTIVE_FULL_TESTS=
+DISPOSABLE_BUILD=
+REAPPROVAL_PATCH_SHA256=
+REAPPROVAL_PATCH_PATHS=
+REAPPROVAL_PATCH_DRY_RUN=
+ATOMIC_DEPLOY=
+CANDIDATE_PROMOTED=
+ACTIVE_AFTER=
+PM2_PROCESS_COUNT=
+PM2_STATUS=
+HTTP_3600=
+STABILITY=
+PM2_SAVE=
+CURRENT_AND_RUNNING_RELEASE_MATCH_AFTER=
+NEW_BASELINE_ROOT=
+NEW_BASELINE_SOURCE_MANIFEST_SHA256=
+NEW_BASELINE_DIAGNOSTIC_COUNT=
+GOOGLE_DRIVE_DRIFT_PRESERVED=
+VEHICLE_BRAND_DEPLOYMENT_ATTEMPTED=NO
+DATABASE_MUTATIONS=NONE
+SECRETS_EXPOSED=NO
