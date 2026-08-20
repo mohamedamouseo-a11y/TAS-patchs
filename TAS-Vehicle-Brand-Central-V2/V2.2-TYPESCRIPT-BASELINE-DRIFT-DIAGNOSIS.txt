@@ -1,0 +1,129 @@
+TAS Vehicle Brand Central V2.2 — TypeScript Baseline Drift Diagnosis
+
+PURPOSE
+Diagnose why the approved TypeScript baseline cache reports that the active source manifest is stale. This run is READ-ONLY with respect to production, trust cache, database, PM2, and /current.
+
+DO NOT refresh or edit the TypeScript baseline cache.
+DO NOT deploy Vehicle Brand V2.
+DO NOT modify the active release.
+DO NOT modify the database.
+DO NOT restart PM2.
+DO NOT switch /current.
+DO NOT install packages.
+
+KNOWN STATE
+- Active production is expected to remain /var/www/TAS-root/releases/20260819_163705_TAS-Excel-Import-Fix-V1.atomic.patch_
+- The prior immutable base release is /var/www/TAS-root/releases/20260819_154644_TAS-PreExisting-Test-Gate-Repair-V1.atomic
+- Frozen Excel Import V1 patch SHA256 is a7b2dbcd16328301149a783085fa777a143eaaebdf7af2948b0d94d4e640bcfc
+- Preferred frozen Excel patch path is /var/www/TAS-root/.tas-excel-import-patch-staging/TAS-Excel-Import-Fix-V1.atomic.patch
+- Trusted verifier is /var/www/TAS-root/.atomic-release/trust/v3.6/release-tree-integrity.py
+- Baseline cache is /var/www/TAS-root/.atomic-release/trust/v3.6/typecheck-baseline-cache
+
+1. Resolve active production and health
+ACTIVE="$(readlink -f /var/www/TAS-root/current)"
+Require exactly one TAS PM2 process online, resolved process cwd == "$ACTIVE", HTTP 127.0.0.1:3600 = 200.
+
+2. Read baseline cache metadata WITHOUT modifying it
+Read only these metadata keys from:
+/var/www/TAS-root/.atomic-release/trust/v3.6/typecheck-baseline-cache/metadata
+- version
+- source_manifest_sha256
+- typescript_sha256
+- gate_sha256
+- baseline_root
+- baseline_log_sha256
+- created_at
+Read baseline.exit only as its numeric exit code.
+Do NOT output baseline.log contents unless needed only to count parseable diagnostics; never expose unrelated source content.
+Report BASELINE_DIAGNOSTIC_COUNT if safely countable with the trusted gate, otherwise NOT_COUNTED.
+
+3. Compute CURRENT active source manifest using the trusted verifier
+Use:
+python3 /var/www/TAS-root/.atomic-release/trust/v3.6/release-tree-integrity.py manifest "$ACTIVE"
+Write only to a disposable temp file outside releases/current.
+Calculate CURRENT_SOURCE_MANIFEST_SHA256.
+Compare to the cached source_manifest_sha256.
+
+4. Reconstruct the EXPECTED current source tree in a disposable directory
+Require the prior base release exists and is not /current.
+Require the frozen Excel patch exists and SHA256 equals exactly:
+a7b2dbcd16328301149a783085fa777a143eaaebdf7af2948b0d94d4e640bcfc
+Create a disposable expected tree outside /var/www/TAS-root/releases and outside /var/www/TAS-root/current.
+Copy the prior immutable base release source tree into the disposable expected tree. Runtime/generated directories may be copied or omitted because the trusted manifest excludes them, but DO NOT alter the prior release itself.
+Apply the frozen Excel patch ONLY to the disposable expected tree using:
+patch --batch --forward --fuzz=0 --strip=1
+Require no fuzz, no offsets, no rejects.
+
+5. Verify expected tree represents Excel Import V1
+Use trusted patch-paths against the frozen Excel patch and require exactly:
+server/routers.ts
+server/services/tasExcelCompetitiveQueueSafe.ts
+server/services/tasExcelImportErrorBoundary.test.ts
+server/services/tasExcelImportErrorBoundary.ts
+Then use the trusted verifier to validate the disposable expected tree.
+
+6. Compare EXPECTED current source to ACTUAL active source
+Run trusted verifier compare:
+python3 /var/www/TAS-root/.atomic-release/trust/v3.6/release-tree-integrity.py compare <EXPECTED_TREE> "$ACTIVE"
+Capture the sanitized difference records emitted by the trusted verifier.
+Do NOT truncate below the first 20 changed paths provided by the verifier.
+For each changed path report whether the difference is:
+- MISSING_IN_ACTIVE
+- EXTRA_IN_ACTIVE
+- CONTENT_SHA_CHANGED
+- MODE_CHANGED
+- XATTR_CHANGED
+- DIRECTORY_METADATA_CHANGED
+or multiple.
+Do not expose file contents by default. For text source files only, if necessary to classify drift, report SHA256 and a small unified diff capped at 30 lines per file, with no secrets. Never show .env or runtime secret files; those are excluded by the trusted verifier anyway.
+
+7. Compare manifest hashes
+Compute EXPECTED_SOURCE_MANIFEST_SHA256 from the trusted verifier manifest of the disposable expected tree.
+Report:
+CACHED_SOURCE_MANIFEST_SHA256=
+CURRENT_SOURCE_MANIFEST_SHA256=
+EXPECTED_SOURCE_MANIFEST_SHA256=
+CACHED_MATCHES_CURRENT=YES/NO
+CACHED_MATCHES_EXPECTED=YES/NO
+CURRENT_MATCHES_EXPECTED=YES/NO
+
+8. Classify root cause
+Use one of:
+- ACTIVE_SOURCE_DRIFT_CONFIRMED
+- BASELINE_CACHE_METADATA_INCONSISTENT
+- EXPECTED_RELEASE_RECONSTRUCTION_BLOCKED
+- NO_DRIFT_REPRODUCED
+Do NOT repair anything in this run.
+
+9. Safety
+Delete only disposable temporary comparison trees/files created by this diagnosis after the report is complete, unless retaining one sanitized diff report is necessary for upload.
+No changes to active release, trust cache, DB, PM2, current symlink, or patch files.
+
+FINAL REPORT
+ACTIVE_RELEASE=
+PM2_STATUS=
+HTTP_3600=
+BASELINE_ROOT=
+BASELINE_CREATED_AT=
+BASELINE_EXIT=
+BASELINE_DIAGNOSTIC_COUNT=
+CACHED_SOURCE_MANIFEST_SHA256=
+CURRENT_SOURCE_MANIFEST_SHA256=
+EXPECTED_SOURCE_MANIFEST_SHA256=
+CACHED_MATCHES_CURRENT=
+CACHED_MATCHES_EXPECTED=
+CURRENT_MATCHES_EXPECTED=
+EXCEL_PATCH_SHA256=
+EXCEL_PATCH_PATHS=
+EXPECTED_RECONSTRUCTION=PASS/FAIL
+DRIFT_PATH_COUNT=
+DRIFT_PATHS_AND_CLASSIFICATION=
+ROOT_CAUSE_CLASSIFICATION=
+PRODUCTION_SOURCE_MUTATIONS=NONE
+TRUST_CACHE_MUTATIONS=NONE
+DATABASE_MUTATIONS=NONE
+PM2_MUTATIONS=NONE
+CURRENT_MUTATIONS=NONE
+PACKAGES_INSTALLED=NONE
+SECRETS_EXPOSED=NO
+DEPLOYMENT_ATTEMPTED=NO
