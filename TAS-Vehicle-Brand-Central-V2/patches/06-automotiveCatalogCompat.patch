@@ -1,0 +1,159 @@
+diff --git a/server/automotiveCatalogCompat.ts b/server/automotiveCatalogCompat.ts
+index ce9de79..9cb8c59 100644
+--- a/server/automotiveCatalogCompat.ts
++++ b/server/automotiveCatalogCompat.ts
+@@ -1,10 +1,12 @@
+ import { sql } from "drizzle-orm";
+ import { getDb } from "./db";
++import { requireActiveTASVehicleBrand } from "./services/tasVehicleBrands";
+ import { bindStorageObjectToEntity, getStorageObjectById } from "./storage";
+ 
+ type AnyRow = Record<string, any>;
+ 
+ type VehicleFilters = {
++  brandId?: number;
+   brand?: string;
+   model?: string;
+   activeOnly?: boolean;
+@@ -13,7 +15,7 @@ type VehicleFilters = {
+ 
+ const JSON_COLUMNS = new Set(["colors", "specs", "faq"]);
+ const VEHICLE_COLUMNS = new Set([
+-  "brand", "model", "trim", "modelYear", "nameAr", "nameEn", "descriptionAr", "descriptionEn",
++  "brandId", "brand", "model", "trim", "modelYear", "nameAr", "nameEn", "descriptionAr", "descriptionEn",
+   "bodyType", "engine", "transmission", "fuelType", "driveType", "seatingCapacity", "doorsCount",
+   "colors", "specs", "faq", "warrantyAr", "warrantyEn", "paymentTermsAr", "paymentTermsEn",
+   "deliveryTermsAr", "deliveryTermsEn", "offerValidityDays", "taxIncluded", "taxRate", "cashPrice",
+@@ -39,6 +41,7 @@ function normalizeVehicle(row: AnyRow) {
+   return {
+     ...row,
+     id: Number(row.id),
++    brandId: row.brandId == null ? null : Number(row.brandId),
+     modelYear: row.modelYear ?? row.year ?? null,
+     year: row.year ?? row.modelYear ?? null,
+     cashPrice: row.cashPrice ?? row.price ?? null,
+@@ -99,10 +102,26 @@ async function hydrateVehicleImages(rows: AnyRow[]) {
+   });
+ }
+ 
++async function automotiveCatalogHasBrandIdColumn(db: any) {
++  const result = await db.execute(sql`
++    SELECT COUNT(*) AS total
++    FROM information_schema.columns
++    WHERE table_schema = DATABASE()
++      AND table_name = 'automotive_vehicles'
++      AND column_name = 'brandId'
++  `);
++  return Number(rowsOf(result)[0]?.total ?? 0) > 0;
++}
++
+ export async function listAutomotiveCatalogVehicles(filters: VehicleFilters = {}) {
+   const db = await getDb();
+   if (!db) return [];
+   const conditions: any[] = [];
++  if (filters.brandId) {
++    const brand = await requireActiveTASVehicleBrand(Number(filters.brandId));
++    if (await automotiveCatalogHasBrandIdColumn(db)) conditions.push(sql`brandId = ${Number(brand.id)}`);
++    else conditions.push(sql`brand = ${brand.nameEn}`);
++  }
+   if (filters.brand) conditions.push(sql`brand = ${filters.brand}`);
+   if (filters.model) conditions.push(sql`model = ${filters.model}`);
+   if (filters.activeOnly !== false && !filters.includeArchived) conditions.push(sql`isActive = 1`);
+@@ -154,27 +173,53 @@ async function syncLegacyTasVehicle(vehicleId: number) {
+ export async function createAutomotiveCatalogVehicle(data: AnyRow, actorUserId: number) {
+   const db = await getDb();
+   if (!db) throw new Error("Database not available");
+-  const result = await db.execute(sql`
+-    INSERT INTO automotive_vehicles (
+-      brand, model, trim, modelYear, nameAr, nameEn, descriptionAr, descriptionEn,
+-      bodyType, engine, transmission, fuelType, driveType, seatingCapacity, doorsCount,
+-      colors, specs, faq, warrantyAr, warrantyEn, paymentTermsAr, paymentTermsEn,
+-      deliveryTermsAr, deliveryTermsEn, offerValidityDays, taxIncluded, taxRate, cashPrice,
+-      currency, availabilityStatus, stockQuantity, sku, sortOrder, isActive, createdBy, updatedBy
+-    ) VALUES (
+-      ${data.brand}, ${data.model}, ${data.trim ?? null}, ${data.modelYear ?? null}, ${data.nameAr ?? null}, ${data.nameEn ?? null},
+-      ${data.descriptionAr ?? null}, ${data.descriptionEn ?? null}, ${data.bodyType ?? null}, ${data.engine ?? null},
+-      ${data.transmission ?? null}, ${data.fuelType ?? null}, ${data.driveType ?? null}, ${data.seatingCapacity ?? null},
+-      ${data.doorsCount ?? null}, ${JSON.stringify(data.colors ?? [])}, ${data.specs == null ? null : JSON.stringify(data.specs)},
+-      ${JSON.stringify(data.faq ?? [])}, ${data.warrantyAr ?? null}, ${data.warrantyEn ?? null}, ${data.paymentTermsAr ?? null},
+-      ${data.paymentTermsEn ?? null}, ${data.deliveryTermsAr ?? null}, ${data.deliveryTermsEn ?? null},
+-      ${Number(data.offerValidityDays ?? 3)}, ${data.taxIncluded === false || data.taxIncluded === 0 ? 0 : 1},
+-      ${String(data.taxRate ?? 14)}, ${data.cashPrice == null || data.cashPrice === "" ? null : String(data.cashPrice)},
+-      ${data.currency ?? "EGP"}, ${data.availabilityStatus ?? "available"}, ${Number(data.stockQuantity ?? 0)},
+-      ${data.sku ?? null}, ${Number(data.sortOrder ?? 0)}, ${data.isActive === false || data.isActive === 0 ? 0 : 1},
+-      ${actorUserId}, ${actorUserId}
+-    )
+-  `);
++  const centralBrand = data.brandId ? await requireActiveTASVehicleBrand(Number(data.brandId)) : null;
++  const canonicalBrand = centralBrand?.nameEn ?? String(data.brand ?? "").trim();
++  if (!canonicalBrand) throw new Error("Vehicle brand is required");
++  const hasBrandId = await automotiveCatalogHasBrandIdColumn(db);
++  const result = hasBrandId
++    ? await db.execute(sql`
++      INSERT INTO automotive_vehicles (
++        brandId, brand, model, trim, modelYear, nameAr, nameEn, descriptionAr, descriptionEn,
++        bodyType, engine, transmission, fuelType, driveType, seatingCapacity, doorsCount,
++        colors, specs, faq, warrantyAr, warrantyEn, paymentTermsAr, paymentTermsEn,
++        deliveryTermsAr, deliveryTermsEn, offerValidityDays, taxIncluded, taxRate, cashPrice,
++        currency, availabilityStatus, stockQuantity, sku, sortOrder, isActive, createdBy, updatedBy
++      ) VALUES (
++        ${centralBrand?.id ?? null}, ${canonicalBrand}, ${data.model}, ${data.trim ?? null}, ${data.modelYear ?? null}, ${data.nameAr ?? null}, ${data.nameEn ?? null},
++        ${data.descriptionAr ?? null}, ${data.descriptionEn ?? null}, ${data.bodyType ?? null}, ${data.engine ?? null},
++        ${data.transmission ?? null}, ${data.fuelType ?? null}, ${data.driveType ?? null}, ${data.seatingCapacity ?? null},
++        ${data.doorsCount ?? null}, ${JSON.stringify(data.colors ?? [])}, ${data.specs == null ? null : JSON.stringify(data.specs)},
++        ${JSON.stringify(data.faq ?? [])}, ${data.warrantyAr ?? null}, ${data.warrantyEn ?? null}, ${data.paymentTermsAr ?? null},
++        ${data.paymentTermsEn ?? null}, ${data.deliveryTermsAr ?? null}, ${data.deliveryTermsEn ?? null},
++        ${Number(data.offerValidityDays ?? 3)}, ${data.taxIncluded === false || data.taxIncluded === 0 ? 0 : 1},
++        ${String(data.taxRate ?? 14)}, ${data.cashPrice == null || data.cashPrice === "" ? null : String(data.cashPrice)},
++        ${data.currency ?? "EGP"}, ${data.availabilityStatus ?? "available"}, ${Number(data.stockQuantity ?? 0)},
++        ${data.sku ?? null}, ${Number(data.sortOrder ?? 0)}, ${data.isActive === false || data.isActive === 0 ? 0 : 1},
++        ${actorUserId}, ${actorUserId}
++      )
++    `)
++    : await db.execute(sql`
++      INSERT INTO automotive_vehicles (
++        brand, model, trim, modelYear, nameAr, nameEn, descriptionAr, descriptionEn,
++        bodyType, engine, transmission, fuelType, driveType, seatingCapacity, doorsCount,
++        colors, specs, faq, warrantyAr, warrantyEn, paymentTermsAr, paymentTermsEn,
++        deliveryTermsAr, deliveryTermsEn, offerValidityDays, taxIncluded, taxRate, cashPrice,
++        currency, availabilityStatus, stockQuantity, sku, sortOrder, isActive, createdBy, updatedBy
++      ) VALUES (
++        ${canonicalBrand}, ${data.model}, ${data.trim ?? null}, ${data.modelYear ?? null}, ${data.nameAr ?? null}, ${data.nameEn ?? null},
++        ${data.descriptionAr ?? null}, ${data.descriptionEn ?? null}, ${data.bodyType ?? null}, ${data.engine ?? null},
++        ${data.transmission ?? null}, ${data.fuelType ?? null}, ${data.driveType ?? null}, ${data.seatingCapacity ?? null},
++        ${data.doorsCount ?? null}, ${JSON.stringify(data.colors ?? [])}, ${data.specs == null ? null : JSON.stringify(data.specs)},
++        ${JSON.stringify(data.faq ?? [])}, ${data.warrantyAr ?? null}, ${data.warrantyEn ?? null}, ${data.paymentTermsAr ?? null},
++        ${data.paymentTermsEn ?? null}, ${data.deliveryTermsAr ?? null}, ${data.deliveryTermsEn ?? null},
++        ${Number(data.offerValidityDays ?? 3)}, ${data.taxIncluded === false || data.taxIncluded === 0 ? 0 : 1},
++        ${String(data.taxRate ?? 14)}, ${data.cashPrice == null || data.cashPrice === "" ? null : String(data.cashPrice)},
++        ${data.currency ?? "EGP"}, ${data.availabilityStatus ?? "available"}, ${Number(data.stockQuantity ?? 0)},
++        ${data.sku ?? null}, ${Number(data.sortOrder ?? 0)}, ${data.isActive === false || data.isActive === 0 ? 0 : 1},
++        ${actorUserId}, ${actorUserId}
++      )
++    `);
+   const id = Number((result as any)?.[0]?.insertId ?? 0);
+   if (!id) throw new Error("Vehicle insert did not return an id");
+   await syncLegacyTasVehicle(id);
+@@ -184,8 +229,21 @@ export async function createAutomotiveCatalogVehicle(data: AnyRow, actorUserId:
+ export async function updateAutomotiveCatalogVehicle(vehicleId: number, patch: AnyRow, actorUserId: number) {
+   const db = await getDb();
+   if (!db) throw new Error("Database not available");
++  const normalizedPatch: AnyRow = { ...patch };
++  const hasBrandId = await automotiveCatalogHasBrandIdColumn(db);
++  if (patch.brandId !== undefined) {
++    if (patch.brandId == null || patch.brandId === "") {
++      if (hasBrandId) normalizedPatch.brandId = null;
++      else delete normalizedPatch.brandId;
++    } else {
++      const centralBrand = await requireActiveTASVehicleBrand(Number(patch.brandId));
++      if (hasBrandId) normalizedPatch.brandId = centralBrand.id;
++      else delete normalizedPatch.brandId;
++      normalizedPatch.brand = centralBrand.nameEn;
++    }
++  }
+   const updates: any[] = [];
+-  for (const [column, rawValue] of Object.entries({ ...patch, updatedBy: actorUserId })) {
++  for (const [column, rawValue] of Object.entries({ ...normalizedPatch, updatedBy: actorUserId })) {
+     if (!VEHICLE_COLUMNS.has(column) || column === "createdBy") continue;
+     const value = valueForColumn(column, rawValue);
+     updates.push(sql`${sql.raw(`\`${column}\``)} = ${value}`);
