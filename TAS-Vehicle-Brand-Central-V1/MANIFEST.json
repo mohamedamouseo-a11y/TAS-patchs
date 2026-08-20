@@ -1,0 +1,50 @@
+{
+  "name": "TAS-Vehicle-Brand-Central-V1",
+  "files": [
+    {
+      "path": "PATCH_NOTES.txt",
+      "sha256": "be10e70840af9424fb06cd15665684d76a3e9dc299b444a7fee41a635b741d81",
+      "bytes": 2045
+    },
+    {
+      "path": "REPLIT_PROMPT.txt",
+      "sha256": "a919fb65652dd9ff36f50074f4b4b28760bf506963ed9dda9310dd2dc59f5a79",
+      "bytes": 9869
+    },
+    {
+      "path": "scripts/build-tas-vehicle-brand-central-v1-atomic.mjs",
+      "sha256": "ac0bbca19f9218eaba5e09c6f87326a17013b833ac9ba6c1837ceef94382a197",
+      "bytes": 19205
+    },
+    {
+      "path": "scripts/prepare-tas-vehicle-brand-central-v1-schema.ts",
+      "sha256": "c8a987474f260c6be87e5027da02cebfd37ce154d731a0bc72f2d7da3aac85c1",
+      "bytes": 3956
+    },
+    {
+      "path": "scripts/verify-tas-vehicle-brand-central-v1-schema.ts",
+      "sha256": "a5f0c67414b8c93dade108ca7254291fad6bfb3ba2b8a88b700e464c5feb681a",
+      "bytes": 2644
+    },
+    {
+      "path": "templates/client/src/components/settings/VehicleBrandsSettings.tsx",
+      "sha256": "d5377478deba5a34d369dbf285350d5f81e79d3bc5b5c3ec8d716336b5aec116",
+      "bytes": 8130
+    },
+    {
+      "path": "templates/server/services/tasVehicleBrandContract.test.ts",
+      "sha256": "8f05ca1e04173c5b434b75ef138ce15b05ddab2c4a625e437f24e61dfda5fdee",
+      "bytes": 1412
+    },
+    {
+      "path": "templates/server/services/tasVehicleBrandContract.ts",
+      "sha256": "cf1146b9f5968510bc80bbc44cb216097ab064ba5370e41eeb62284778594da2",
+      "bytes": 2292
+    },
+    {
+      "path": "templates/server/services/tasVehicleBrands.ts",
+      "sha256": "5d57db433dae6467e7d734eb028c29e04106a9b2e8ba0824e759734269270a04",
+      "bytes": 4290
+    }
+  ]
+}
