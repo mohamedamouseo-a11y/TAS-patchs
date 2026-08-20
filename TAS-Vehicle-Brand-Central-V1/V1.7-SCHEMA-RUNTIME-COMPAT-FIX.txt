@@ -1,0 +1,40 @@
+TAS Vehicle Brand Central V1.7 — Schema Runtime Compatibility Fix
+
+Purpose:
+Fix schema preparation and verification runtime compatibility under the project's existing tsx/CJS transform path.
+
+Root cause:
+Both schema scripts used top-level await. The approved invocation `pnpm exec tsx <script.ts>` transformed the staged script using CommonJS output, where top-level await is unsupported. Execution therefore failed before any database connection or DDL.
+
+Correction:
+- Wrap schema preparation logic in async function main().
+- Wrap schema verification logic in async function main().
+- Invoke main().catch(...) and set process.exitCode=1 on failure.
+- Preserve all existing database-name checks, additive-only DDL, session-only lock timeouts, read-only verification logic, and fail-closed behavior.
+- No change to TAS application patch paths or feature logic.
+
+Affected kit files:
+TAS-Vehicle-Brand-Central-V1/scripts/prepare-tas-vehicle-brand-central-v1-schema.ts
+TAS-Vehicle-Brand-Central-V1/scripts/verify-tas-vehicle-brand-central-v1-schema.ts
+
+Safety:
+- No production source mutation.
+- No PM2 mutation.
+- No /current mutation.
+- No global DB variables.
+- No privilege grants.
+- No destructive SQL.
+- Existing application atomic patch may be reused if its SHA remains unchanged because these kit scripts are not application patch payload paths.
+
+Required validation before DB execution:
+1. Refresh exact remote branch.
+2. Verify both scripts contain `async function main()`.
+3. Verify neither script contains top-level `await` outside function scope.
+4. Run tsx transform/execution path only through the approved staged script invocation.
+5. Schema prep must emit TAS_VEHICLE_BRAND_SCHEMA_PREP=PASS.
+6. Schema verify must emit TAS_VEHICLE_BRAND_SCHEMA_VERIFY=PASS and VERIFY_MODE=READ_ONLY.
+
+Expected:
+V17_SCHEMA_RUNTIME_FIX_PRESENT=YES
+SCHEMA_PREP_RUNTIME_COMPAT=PASS
+SCHEMA_VERIFY_RUNTIME_COMPAT=PASS
