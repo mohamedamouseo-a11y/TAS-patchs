@@ -1,0 +1,49 @@
+TAS Vehicle Brand Central V1.6 — Database Lock Precheck Procedure Correction
+
+Purpose:
+Allow Vehicle Brand Central V1 to continue safely when the application database account does not have PROCESS privilege for information_schema.innodb_trx.
+
+Observed failure:
+- DERIVED_DATABASE_NAME=tas_crm
+- information_schema.innodb_trx query failed with ER_SPECIFIC_ACCESS_DENIED_ERROR because PROCESS privilege is unavailable.
+- No schema preparation or deployment was performed.
+
+Policy:
+Do NOT grant PROCESS to the application database user solely for this migration.
+Do NOT infer DDL_LOCK_RISK=NO from unavailable transaction visibility.
+Treat the PROCESS-dependent visibility probe as optional diagnostic capability, not a mandatory deployment prerequisite.
+
+Compensating safety control:
+The supplied schema-prep script now sets, on its own database session only:
+- SET SESSION lock_wait_timeout = 5
+- SET SESSION innodb_lock_wait_timeout = 5
+
+This makes additive DDL fail closed quickly on metadata/data lock contention without requiring PROCESS privilege.
+
+Required precheck classification:
+1. Derive and require database name tas_crm without printing DATABASE_URL.
+2. Optionally probe information_schema.innodb_trx.
+3. If the probe succeeds, report visibility and any material lock risk.
+4. If the probe fails ONLY with ER_SPECIFIC_ACCESS_DENIED_ERROR / missing PROCESS privilege, report:
+   DDL_LOCK_VISIBILITY=LIMITED_NO_PROCESS
+   PROCESS_PRIVILEGE_REQUIRED_FOR_DEPLOY=NO
+   BOUNDED_DDL_LOCK_WAIT=YES
+   and continue only because the schema-prep script enforces the 5-second session lock wait timeout.
+5. If the schema-prep command itself encounters metadata lock timeout or lock wait timeout, STOP fail-closed and do not deploy the application.
+
+Requirements:
+- No privilege grants.
+- No global DB variable changes.
+- No destructive DDL/DML.
+- No business-row mutation during schema prep.
+- No manual retry loop after lock timeout without a fresh production-state review.
+
+Expected successful fields:
+DERIVED_DATABASE_NAME=tas_crm
+DDL_LOCK_VISIBILITY=FULL or LIMITED_NO_PROCESS
+PROCESS_PRIVILEGE_REQUIRED_FOR_DEPLOY=NO
+DDL_LOCK_TIMEOUT_SECONDS=5
+BOUNDED_DDL_LOCK_WAIT=YES
+SCHEMA_PREP=PASS
+DESTRUCTIVE_DB_OPERATIONS=NONE
+EXISTING_BUSINESS_ROWS_MUTATED_BY_SCHEMA_PREP=NO
