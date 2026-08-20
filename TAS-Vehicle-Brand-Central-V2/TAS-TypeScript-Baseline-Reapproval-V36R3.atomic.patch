@@ -1,0 +1,11 @@
+diff --git a/scripts/deploy-active-release.sh b/scripts/deploy-active-release.sh
+index b3c4eea..448e2e1 100755
+--- a/scripts/deploy-active-release.sh
++++ b/scripts/deploy-active-release.sh
+@@ -1,5 +1,6 @@
+ #!/usr/bin/env bash
+ # TAS_TYPECHECK_BASELINE_BOOTSTRAP_V36R2
++# TAS_TYPECHECK_BASELINE_REAPPROVAL_V36R3
+ set -Eeuo pipefail
+ umask 077
+ 
