@@ -1,0 +1,34 @@
+TAS Vehicle Brand Central V2.0 — SOURCE-DERIVED DEPLOY PROCEDURE
+
+FAIL CLOSED. This V2 was built from the complete active production source export, not the old V1 assumptions.
+
+Repository: mohamedamouseo-a11y/TAS-patchs
+Branch: patch/tas-vehicle-brand-central-v1
+Kit: TAS-Vehicle-Brand-Central-V2
+Expected application patch SHA256: 47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d
+Expected DB: tas_crm
+Production root: /var/www/TAS-root
+
+1. Fetch the authoritative remote branch and use the exact current remote head supplied in the execution prompt.
+2. Resolve ACTIVE=readlink -f /var/www/TAS-root/current; require one TAS PM2 process online, resolved cwd=ACTIVE, HTTP 3600=200.
+3. Validate every existing source SHA and every required-absent new file using V2.0-MANIFEST.txt. If any mismatch, STOP and request a new full source export.
+4. Concatenate patches/01 through patches/13 in exact manifest order into /var/www/TAS-root/.tas-vehicle-brand-v2/TAS-Vehicle-Brand-Central-V2.atomic.patch. Require SHA256 exactly 47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d.
+5. Validate patch paths are exactly the 13 paths in the manifest. Require drizzle/schema.ts unchanged and tasExcelCompetitiveQueueSafe.ts unchanged.
+6. Create an isolated candidate copy from ACTIVE, excluding/reusing dependencies according to the official deployment workflow. Apply the V2 patch with patch --batch --forward --fuzz=0 --strip=1. Require zero rejects/offsets/fuzz.
+7. In the isolated candidate run targeted Vehicle Brand contract tests plus Excel error-boundary tests, then full pnpm test. Any failure => STOP.
+8. Run TypeScript under the same official memory envelope used by deploy. Trusted baseline=915. Require completed compiler execution, candidate diagnostics <=915, and zero new diagnostics attributable to V2. Any abnormal exit or regression => STOP.
+9. Run production build in isolated candidate under official build envelope. Any failure => STOP.
+10. Securely obtain existing production DATABASE_URL without printing it; derive and require database name tas_crm.
+11. Run schema prep with ACTIVE runtime dependencies:
+TAS_RUNTIME_ROOT="$ACTIVE" TAS_EXPECTED_DATABASE_NAME=tas_crm node /var/www/TAS-root/.tas-vehicle-brand-v2/kit/scripts/prepare-tas-vehicle-brand-central-v2-schema.mjs
+Require TAS_VEHICLE_BRAND_V2_SCHEMA_PREP=PASS, DESTRUCTIVE_OPERATIONS=NONE. automotive_vehicles absence is allowed and must report AUTOMOTIVE_OPTIONAL_INTEGRATION=SKIPPED_TABLE_NOT_PRESENT. Do not create automotive_vehicles merely for this feature.
+12. Run read-only schema verify similarly with verify-tas-vehicle-brand-central-v2-schema.mjs. Require PASS.
+13. Recheck application patch SHA, production health, and source active release has not changed since preflight.
+14. Deploy ONLY via official atomic deploy:
+APP_DEPLOY_ROOT=/var/www/TAS-root PM2_APP_NAME=TAS DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6 bash /var/www/TAS-root/current/scripts/deploy-active-release.sh /var/www/TAS-root/.tas-vehicle-brand-v2/TAS-Vehicle-Brand-Central-V2.atomic.patch
+15. Require candidate promoted, one TAS process online, HTTP 200, stability PASS, PM2 save PASS, current/running release realpaths match.
+16. Run post-deploy targeted tests.
+17. Functional validation: Settings > Vehicle Brands, active/inactive behavior, Excel brand selection requirement, backend rejection of missing/invalid/inactive brand, tas_vehicles brandId + canonical brand text for new TAS vehicle creation. Do not create fake production brands. If no real active brand exists, report that and do not fabricate one.
+18. If authenticated access + System.xlsx + a real active brand are available, run real Excel preview/import and verify batch brandId, new lead tas_lead_brand_interests record, duplicates unchanged, queue behavior, and no raw SQL in UI. Otherwise report NOT_VERIFIED with exact blocker.
+
+Never grant PROCESS, change Node/NVM, install global tooling, mutate main/master, manually restart PM2, manually switch current, perform destructive DB operations, backfill legacy rows, or expose secrets/customer data.
