@@ -1,4 +1,4 @@
-TAS Developer Hub Runtime Exclusion Sync V2.2
+TAS Developer Hub Runtime Exclusion Sync V2.2 — Corrected Integrity Manifest
 
 Patch repository:
 mohamedamouseo-a11y/TAS-patchs
@@ -18,24 +18,31 @@ Source HEAD baseline:
 Corrected patch file:
 TAS-Developer-Hub-Runtime-Exclusion-Sync-V2.2.atomic.patch
 
-Corrected patch Git blob SHA:
-8fbd36e8dbcc73af8d4cf14eed248b4225dd0629
+ACTUAL REQUIRED patch Git blob SHA:
+3aa0b7eb3162e22593517cb4ce05e2e1866b07b1
 
-Corrected patch SHA256:
-3e5e6a55763ce4c382b52f4fbfe42523033f3ba263a40ff57c03aad5d6562ea5
+ACTUAL REQUIRED patch SHA256:
+4b2a3d1cf4615c2ac671cf2ee0ed0fdbb743849428a8997b428ec0cd82079b90
 
 Exact allowed changed paths:
 1. server/routes/developerHub.ts
 2. server/services/developerHubSourceExportSafety.test.ts
 
+Integrity correction:
+The previously published V2.2 manifest incorrectly listed Git blob SHA 8fbd36e8dbcc73af8d4cf14eed248b4225dd0629 and SHA256 3e5e6a55763ce4c382b52f4fbfe42523033f3ba263a40ff57c03aad5d6562ea5. Those values are superseded and MUST NOT be used.
+
+The patch artifact itself is unchanged by this correction. At the verified repository checkout it is 5328 bytes and has:
+- Git blob SHA: 3aa0b7eb3162e22593517cb4ce05e2e1866b07b1
+- SHA256: 4b2a3d1cf4615c2ac671cf2ee0ed0fdbb743849428a8997b428ec0cd82079b90
+
 Reason for V2.2:
 The prior V2 artifact had invalid unified-diff hunk counts and failed `git apply --check` with `corrupt patch at line 31`. V2.2 preserves the intended code changes but regenerates the patch with valid hunk ranges/counts.
 
 Required gates:
-- patch repo branch head must match the latest V2.2 procedure commit
+- patch repo branch head must match the latest integrity-corrected manifest commit
 - source HEAD must equal the baseline above
-- Git blob SHA must match exactly
-- SHA256 must match exactly
+- Git blob SHA must match ACTUAL REQUIRED value above
+- SHA256 must match ACTUAL REQUIRED value above
 - patch path count exactly 2
 - `git apply --check` PASS
 - fuzz=0, offsets=0, rejects=0
