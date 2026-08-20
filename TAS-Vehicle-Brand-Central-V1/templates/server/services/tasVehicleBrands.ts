@@ -3,10 +3,20 @@ import { getDb } from "../db";
 import { normalizeVehicleBrandPayload, type VehicleBrandInput } from "./tasVehicleBrandContract";
 
 type AnyRow = Record<string, any>;
+export type TASVehicleBrandRow = AnyRow & {
+  id: number;
+  code: string;
+  nameEn: string;
+  nameAr: string | null;
+  aliases: string[];
+  isActive: number;
+  sortOrder: number;
+};
+
 const rowsOf = (result: any): AnyRow[] => (result as any)?.[0] ?? [];
 const oneOf = (result: any): AnyRow | null => rowsOf(result)[0] ?? null;
 
-function normalizeBrandRow(row: AnyRow) {
+function normalizeBrandRow(row: AnyRow): TASVehicleBrandRow {
   let aliases: string[] = [];
   try {
     aliases = Array.isArray(row.aliases) ? row.aliases : JSON.parse(String(row.aliases ?? "[]"));
@@ -16,6 +26,9 @@ function normalizeBrandRow(row: AnyRow) {
   return {
     ...row,
     id: Number(row.id),
+    code: String(row.code ?? ""),
+    nameEn: String(row.nameEn ?? ""),
+    nameAr: row.nameAr == null ? null : String(row.nameAr),
     isActive: Number(row.isActive ?? 1),
     sortOrder: Number(row.sortOrder ?? 0),
     aliases,
