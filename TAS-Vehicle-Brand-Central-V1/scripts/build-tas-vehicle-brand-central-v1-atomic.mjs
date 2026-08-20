@@ -226,19 +226,27 @@ for (const rel of [
   write(target, rel, text);
 }
 
-// Syntax-only TypeScript/TSX parse for every changed/new app file using globally installed TypeScript.
+// Syntax-only TypeScript/TSX parse for every changed/new app file using the source project's local TypeScript.
 const syntaxFiles = expectedPaths.filter((p) => /\.(ts|tsx)$/.test(p));
 const syntaxCheck = `
-const ts=require('/opt/nvm/versions/node/v22.16.0/lib/node_modules/typescript/lib/typescript.js');
+const [projectRoot,...files]=process.argv.slice(1);
+let ts;
+try {
+  const typescriptPath=require.resolve('typescript',{paths:[projectRoot]});
+  ts=require(typescriptPath);
+} catch (error) {
+  console.error('PROJECT_LOCAL_TYPESCRIPT_RESOLUTION_FAILED', error?.code || error?.message || String(error));
+  process.exit(3);
+}
 const fs=require('fs');
-for(const f of process.argv.slice(1)){
+for(const f of files){
  const src=fs.readFileSync(f,'utf8');
  const out=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX},reportDiagnostics:true,fileName:f});
  const errors=(out.diagnostics||[]).filter(d=>d.category===ts.DiagnosticCategory.Error);
  if(errors.length){console.error(f,errors.map(d=>ts.flattenDiagnosticMessageText(d.messageText,' ')));process.exit(2);}
 }
 `;
-execFileSync(process.execPath, ["-e", syntaxCheck, ...syntaxFiles.map((rel) => path.join(target, rel))], { stdio: "inherit" });
+execFileSync(process.execPath, ["-e", syntaxCheck, sourceRoot, ...syntaxFiles.map((rel) => path.join(target, rel))], { stdio: "inherit" });
 
 let diff = "";
 try {
