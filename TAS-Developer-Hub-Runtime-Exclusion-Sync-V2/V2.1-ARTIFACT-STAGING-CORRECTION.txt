@@ -1,0 +1,42 @@
+TAS Developer Hub Runtime Exclusion Sync V2.1 — Artifact Staging Correction
+
+Scope: procedure-only correction. The V2 atomic patch itself is unchanged.
+
+Patch repository:
+mohamedamouseo-a11y/TAS-patchs
+
+Patch branch:
+patch/tas-developer-hub-runtime-exclusion-sync-v2
+
+Frozen patch path inside repository:
+TAS-Developer-Hub-Runtime-Exclusion-Sync-V2/TAS-Developer-Hub-Runtime-Exclusion-Sync-V2.atomic.patch
+
+Frozen patch Git blob SHA:
+85d57c97f31c9bd92e55f7f8a8615032cf619990
+
+Correction:
+Do NOT assume the patch exists at /home/ubuntu/TAS-Developer-Hub-Runtime-Exclusion-Sync-V2.atomic.patch or any other hardcoded local path.
+
+Required artifact procedure:
+1. Refresh/checkout the exact patch repository branch and verify its current branch head before execution.
+2. Locate the frozen patch by its repository-relative path inside that verified checkout.
+3. Verify the local source artifact using `git hash-object <patch-file>` and require exactly:
+   85d57c97f31c9bd92e55f7f8a8615032cf619990
+4. Record `sha256sum <patch-file>` for evidence.
+5. If deployment runs on a different host, copy that exact verified file from the verified patch-repository checkout to a dedicated remote staging path. Do not rebuild, regenerate, reassemble, or edit it.
+6. On the deployment host, verify the staged file again with `git hash-object` and require the same Git blob SHA before invoking the official atomic deploy script.
+7. Use the absolute path of that verified staged file as the final argument to `deploy-active-release.sh`.
+8. If the repository-relative artifact cannot be materialized or its Git blob SHA differs, STOP FAIL-CLOSED.
+
+All prior V2 safety gates remain unchanged:
+- source HEAD must still match the approved V2 source baseline unless a new authorized procedure explicitly changes it
+- patch path count exactly 2
+- fuzz=0, offsets=0, rejects=0
+- targeted tests PASS
+- protected Vehicle Brand and Google Drive checks PASS
+- no DB/schema/package/.gitignore changes
+- official atomic deploy only
+- no manual /current switch, PM2 restart, candidate promotion, or production source edits
+- real Review Push then Execute Push validation only after successful deploy
+
+This correction addresses only the missing local artifact staging path that caused the previous STOPPED_FAIL_CLOSED report.
