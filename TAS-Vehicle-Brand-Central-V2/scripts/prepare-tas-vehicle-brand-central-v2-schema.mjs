@@ -1,22 +1,75 @@
+import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
-const expected = process.env.TAS_EXPECTED_DATABASE_NAME;
-const runtimeRoot = process.env.TAS_RUNTIME_ROOT;
-const rawUrl = process.env.DATABASE_URL;
+const expected = String(process.env.TAS_EXPECTED_DATABASE_NAME || "").trim();
+const runtimeRoot = String(process.env.TAS_RUNTIME_ROOT || "").trim();
 if (!expected) throw new Error("TAS_EXPECTED_DATABASE_NAME is required");
 if (!runtimeRoot) throw new Error("TAS_RUNTIME_ROOT is required");
-if (!rawUrl) throw new Error("DATABASE_URL is required");
 
-const parsed = new URL(rawUrl);
-const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+const resolvedRuntimeRoot = fs.realpathSync(path.resolve(runtimeRoot));
+const runtimeRequire = createRequire(path.join(resolvedRuntimeRoot, "package.json"));
+const mysql = runtimeRequire("mysql2/promise");
+const { config: dotenvConfig } = runtimeRequire("dotenv");
+
+const DATABASE_ENV_KEYS = [
+  "DATABASE_URL",
+  "DB_HOST",
+  "DB_PORT",
+  "DB_USER",
+  "DB_PASSWORD",
+  "DB_NAME",
+  "MYSQL_HOST",
+  "MYSQL_PORT",
+  "MYSQL_USER",
+  "MYSQL_PASSWORD",
+  "MYSQL_DATABASE",
+];
+
+function loadExactRuntimeDatabaseEnvironment() {
+  const runtimeEnv = path.join(resolvedRuntimeRoot, ".env");
+  if (!fs.existsSync(runtimeEnv)) throw new Error("Active TAS runtime .env is missing");
+  const runtimeEnvResolved = fs.realpathSync(runtimeEnv);
+  const requested = String(process.env.TAS_RUNTIME_ENV_FILE || runtimeEnv).trim();
+  if (!requested) throw new Error("TAS runtime env path is empty");
+  const requestedResolved = fs.realpathSync(requested);
+  if (requestedResolved !== runtimeEnvResolved) {
+    throw new Error("TAS runtime env path does not match the active release runtime env");
+  }
+  for (const key of DATABASE_ENV_KEYS) delete process.env[key];
+  const loaded = dotenvConfig({ path: runtimeEnvResolved, override: true });
+  if (loaded.error) throw loaded.error;
+  return runtimeEnvResolved;
+}
+
+function databaseConfig() {
+  const rawUrl = String(process.env.DATABASE_URL || "").trim();
+  if (rawUrl) {
+    const parsed = new URL(rawUrl);
+    const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+    if (!databaseName) throw new Error("Database name is missing from DATABASE_URL");
+    return { connection: rawUrl, databaseName };
+  }
+  const connection = {
+    host: process.env.DB_HOST || process.env.MYSQL_HOST || "127.0.0.1",
+    port: Number(process.env.DB_PORT || process.env.MYSQL_PORT || 3306),
+    user: process.env.DB_USER || process.env.MYSQL_USER || "",
+    password: process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || "",
+    database: process.env.DB_NAME || process.env.MYSQL_DATABASE || "",
+    multipleStatements: false,
+  };
+  if (!connection.user || !connection.database) {
+    throw new Error("Production database configuration is missing from the active TAS runtime env");
+  }
+  return { connection, databaseName: String(connection.database) };
+}
+
+loadExactRuntimeDatabaseEnvironment();
+const { connection: connectionConfig, databaseName } = databaseConfig();
 if (databaseName !== expected) throw new Error(`Unexpected database name: ${databaseName}`);
 
-const runtimeRequire = createRequire(path.join(path.resolve(runtimeRoot), "package.json"));
-const mysql = runtimeRequire("mysql2/promise");
-
 async function main() {
-  const connection = await mysql.createConnection(rawUrl);
+  const connection = await mysql.createConnection(connectionConfig);
   const q = async (sql, values = []) => connection.query(sql, values);
   const scalar = async (sql, values = []) => Number(((await q(sql, values))[0] ?? [])[0]?.n ?? 0);
   const tableExists = async (table) => (await scalar(
@@ -33,6 +86,10 @@ async function main() {
   )) > 0;
 
   try {
+    const [identityRows] = await q("SELECT DATABASE() AS databaseName");
+    const connectedDatabase = String(identityRows?.[0]?.databaseName || "");
+    if (connectedDatabase !== expected) throw new Error(`Connected database mismatch: ${connectedDatabase || "empty"}`);
+
     await q("SET SESSION lock_wait_timeout = 5");
     await q("SET SESSION innodb_lock_wait_timeout = 5");
 
@@ -100,6 +157,7 @@ async function main() {
 
     console.log("TAS_VEHICLE_BRAND_V2_SCHEMA_PREP=PASS");
     console.log(`DATABASE_NAME=${databaseName}`);
+    console.log("RUNTIME_ENV_SOURCE=ACTIVE_RELEASE_DOTENV");
     console.log("DEPENDENCY_RESOLUTION=ACTIVE_RELEASE");
     console.log("DDL_LOCK_TIMEOUT_SECONDS=5");
     console.log(`AUTOMOTIVE_OPTIONAL_INTEGRATION=${automotiveIntegration}`);
