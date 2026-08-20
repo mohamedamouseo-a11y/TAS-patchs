@@ -1,0 +1,55 @@
+TAS Developer Hub Runtime Exclusion Sync V2.3 — Deploy Root Environment Correction
+
+Scope: procedure-only correction. The V2.2 atomic patch is unchanged.
+
+Patch repository:
+mohamedamouseo-a11y/TAS-patchs
+
+Patch branch:
+patch/tas-developer-hub-runtime-exclusion-sync-v2
+
+Frozen patch:
+TAS-Developer-Hub-Runtime-Exclusion-Sync-V2/TAS-Developer-Hub-Runtime-Exclusion-Sync-V2.2.atomic.patch
+
+Required patch Git blob SHA:
+3aa0b7eb3162e22593517cb4ce05e2e1866b07b1
+
+Required patch SHA256:
+4b2a3d1cf4615c2ac671cf2ee0ed0fdbb743849428a8997b428ec0cd82079b90
+
+Source baseline:
+90346e80e538a11c23c77f2100a32979635c8e3c
+
+Root cause of previous fail-closed stop:
+The official script `scripts/deploy-active-release.sh` defines:
+ROOT="${APP_DEPLOY_ROOT:-/var/www/automotivecrm}"
+APP_NAME="${PM2_APP_NAME:-automotivecrm}"
+TRUST_ROOT="${DEPLOY_TRUST_ROOT:-$ROOT/.atomic-release/trust/v3.6}"
+
+The previous invocation reached the script without APP_DEPLOY_ROOT, causing the legacy default `/var/www/automotivecrm` to be used and the deployment to stop on `/var/www/automotivecrm/current must be a symlink`.
+
+Required correction:
+1. Do not modify the deploy script.
+2. Before deployment, inspect the exact invocation boundary (local shell / SSH / sudo) and ensure APP_DEPLOY_ROOT, PM2_APP_NAME, and DEPLOY_TRUST_ROOT are injected into the SAME final process that launches `bash .../deploy-active-release.sh`.
+3. Do not rely on a parent-shell export if an SSH or sudo boundary may discard environment variables.
+4. If sudo/root privilege is required, inject the variables after the privilege boundary, e.g. with `sudo env ... bash ...`, or an equivalent documented mechanism that demonstrably reaches the final bash process.
+5. Before the real deploy, run a non-mutating environment-boundary probe on the deployment host that prints only these sanitized values from the same privilege/SSH boundary:
+   APP_DEPLOY_ROOT
+   PM2_APP_NAME
+   DEPLOY_TRUST_ROOT
+   Require exactly:
+   APP_DEPLOY_ROOT=/var/www/TAS-root
+   PM2_APP_NAME=TAS
+   DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6
+6. Also verify read-only that `/var/www/TAS-root/current` is a symlink and resolves to the expected active release.
+7. Only after the probe passes, invoke the official script through the SAME environment/privilege boundary with the exact verified V2.2 staged patch path.
+8. Do not pass through or preserve unrelated environment variables/secrets; inject only the required deployment-control variables plus any already-documented non-secret runtime controls required by the official script.
+9. If the script diagnostic metadata reports any root other than `/var/www/TAS-root`, STOP FAIL-CLOSED and do not retry with guesses.
+
+No DB/schema/package/.gitignore changes.
+No Vehicle Brand changes.
+No Google Drive service changes.
+No manual /current switch.
+No manual PM2 restart.
+No manual promotion.
+No production source edits.
