@@ -1,0 +1,78 @@
+diff --git a/server/services/tasVehicleBrandContract.ts b/server/services/tasVehicleBrandContract.ts
+new file mode 100644
+index 0000000..e2db6bb
+--- /dev/null
++++ b/server/services/tasVehicleBrandContract.ts
+@@ -0,0 +1,72 @@
++export type VehicleBrandInput = {
++  code?: unknown;
++  nameEn?: unknown;
++  nameAr?: unknown;
++  aliases?: unknown;
++  isActive?: unknown;
++  sortOrder?: unknown;
++};
++
++const clean = (value: unknown) => String(value ?? "").trim();
++
++export function normalizeVehicleBrandCode(value: unknown) {
++  const normalized = clean(value)
++    .normalize("NFKC")
++    .toUpperCase()
++    .replace(/[^A-Z0-9]+/g, "_")
++    .replace(/^_+|_+$/g, "");
++  if (!normalized) throw new Error("Vehicle brand code is required");
++  if (normalized.length > 64) throw new Error("Vehicle brand code is too long");
++  return normalized;
++}
++
++export function normalizeVehicleBrandAliases(value: unknown): string[] {
++  const raw = Array.isArray(value)
++    ? value
++    : typeof value === "string"
++      ? value.split(",")
++      : [];
++  const seen = new Set<string>();
++  const aliases: string[] = [];
++  for (const item of raw) {
++    const alias = clean(item);
++    if (!alias) continue;
++    const key = alias.normalize("NFKC").toLocaleLowerCase();
++    if (seen.has(key)) continue;
++    seen.add(key);
++    aliases.push(alias.slice(0, 120));
++  }
++  return aliases.slice(0, 50);
++}
++
++export function normalizeVehicleBrandPayload(input: VehicleBrandInput) {
++  const code = normalizeVehicleBrandCode(input.code);
++  const nameEn = clean(input.nameEn);
++  const nameAr = clean(input.nameAr) || null;
++  if (!nameEn) throw new Error("Vehicle brand English name is required");
++  if (nameEn.length > 120 || (nameAr && nameAr.length > 120)) {
++    throw new Error("Vehicle brand name is too long");
++  }
++  const numericSortOrder = Number(input.sortOrder ?? 0);
++  const sortOrder = Number.isFinite(numericSortOrder)
++    ? Math.max(-100000, Math.min(100000, Math.trunc(numericSortOrder)))
++    : 0;
++  return {
++    code,
++    nameEn,
++    nameAr,
++    aliases: normalizeVehicleBrandAliases(input.aliases),
++    isActive: input.isActive === false || input.isActive === 0 ? 0 : 1,
++    sortOrder,
++  };
++}
++
++export function assertTASExcelVehicleBrandSelection(
++  sourceFileName: string | null | undefined,
++  brandId: number | null | undefined,
++) {
++  if (!clean(sourceFileName)) return;
++  if (!Number.isInteger(Number(brandId)) || Number(brandId) <= 0) {
++    throw new Error("Vehicle brand is required for Excel import");
++  }
++}
