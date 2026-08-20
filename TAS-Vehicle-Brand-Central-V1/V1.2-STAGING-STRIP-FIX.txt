@@ -1,0 +1,52 @@
+TAS Vehicle Brand Central V1.2 — Staging Strip-Level Correction
+
+Purpose:
+Correct the deployment procedure used to apply V1.1-BUILDER-FIX.patch to the staged patch kit.
+
+Observed staging layout:
+/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/
+  scripts/build-tas-vehicle-brand-central-v1-atomic.mjs
+  V1.1-BUILDER-FIX.patch
+  ...
+
+V1.1 patch header:
+a/TAS-Vehicle-Brand-Central-V1/scripts/build-tas-vehicle-brand-central-v1-atomic.mjs
+b/TAS-Vehicle-Brand-Central-V1/scripts/build-tas-vehicle-brand-central-v1-atomic.mjs
+
+Because --directory points directly at the contents of TAS-Vehicle-Brand-Central-V1, the correct strip level is 2, not 1.
+
+Required dry-run:
+
+patch \
+  --batch \
+  --forward \
+  --fuzz=0 \
+  --strip=2 \
+  --directory=/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit \
+  --dry-run \
+  < /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/V1.1-BUILDER-FIX.patch
+
+Required apply after PASS:
+
+patch \
+  --batch \
+  --forward \
+  --fuzz=0 \
+  --strip=2 \
+  --directory=/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit \
+  < /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/V1.1-BUILDER-FIX.patch
+
+Expected:
+V11_FIX_DRY_RUN=PASS
+V11_FIX_APPLIED=YES
+FUZZ=0
+OFFSETS=0
+REJECTS=0
+
+Safety:
+- This correction applies only to the staged patch kit.
+- It must NOT be applied to TAS application source.
+- It does NOT modify /var/www/TAS-root/current.
+- It does NOT modify PM2.
+- It does NOT modify the database.
+- It does NOT authorize bypassing any later deployment gate.
