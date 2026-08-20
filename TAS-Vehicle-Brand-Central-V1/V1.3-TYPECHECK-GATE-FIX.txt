@@ -1,0 +1,53 @@
+TAS Vehicle Brand Central V1.3 — TypeScript Gate Procedure Correction
+
+Purpose:
+Correct the isolated candidate TypeScript validation procedure so it matches the existing trusted TAS deployment gate environment.
+
+Observed failed command:
+node <candidate>/node_modules/typescript/bin/tsc --project <candidate>/tsconfig.json --noEmit --pretty false --incremental false
+
+Observed result:
+process aborted with exit code 134 before diagnostics could be compared.
+
+Existing TAS deploy-active-release.sh defines:
+TYPECHECK_NODE_OPTIONS=${TYPECHECK_NODE_OPTIONS:---max-old-space-size=3072}
+
+and executes the typecheck command under:
+MALLOC_ARENA_MAX=2 NODE_OPTIONS="$TYPECHECK_NODE_OPTIONS"
+
+Therefore the isolated pre-deploy candidate typecheck must use the same execution envelope. Do not infer a TypeScript regression from a bare tsc process abort.
+
+Required isolated candidate invocation:
+
+candidate=/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/test-copy
+TYPECHECK_NODE_OPTIONS="--max-old-space-size=3072"
+MALLOC_ARENA_MAX=2 \
+NODE_OPTIONS="$TYPECHECK_NODE_OPTIONS" \
+node "$candidate/node_modules/typescript/bin/tsc" \
+  --project "$candidate/tsconfig.json" \
+  --noEmit \
+  --pretty false \
+  --incremental false
+
+The command output may be captured to a staging log for counting diagnostics, but secrets must not be exposed.
+
+Requirements:
+- Do NOT install global TypeScript.
+- Do NOT modify Node/NVM.
+- Do NOT modify production source.
+- Do NOT weaken the trusted 915-diagnostic baseline gate.
+- Candidate diagnostics must complete normally before comparison.
+- Candidate diagnostic count must be <= 915.
+- No new diagnostic attributable to Vehicle Brand Central may be introduced.
+- If the compiler still exits abnormally under this official envelope, STOP and report the exit code and sanitized first/last compiler output lines; do not continue to DB/build/deploy.
+
+Expected successful classification:
+TYPECHECK_EXECUTION_ENVELOPE=MATCHES_OFFICIAL_DEPLOY
+TYPECHECK_PROCESS_EXIT=NORMAL
+TYPECHECK_BASELINE=915
+TYPECHECK_CANDIDATE=<integer <= 915>
+NEW_TYPESCRIPT_DIAGNOSTICS=0
+TYPECHECK_BASELINE_GATE=PASS
+
+Safety:
+This is a deployment-procedure correction only. It makes no TAS application-code, PM2, symlink, database, Node, NVM, or dependency mutation.
