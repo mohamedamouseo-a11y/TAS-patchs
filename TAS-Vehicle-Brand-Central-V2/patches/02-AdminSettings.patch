@@ -1,0 +1,43 @@
+diff --git a/client/src/pages/AdminSettings.tsx b/client/src/pages/AdminSettings.tsx
+index 1ef572d..08602f5 100644
+--- a/client/src/pages/AdminSettings.tsx
++++ b/client/src/pages/AdminSettings.tsx
+@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+ import { useLanguage } from "@/contexts/LanguageContext";
+ import { useThemeTokens } from "@/contexts/ThemeTokenContext";
+ import { trpc } from "@/lib/trpc";
++import VehicleBrandsSettings from "@/components/settings/VehicleBrandsSettings";
+ import { APP_USER_ROLES, isAdminRole, isMediaBuyerRole } from "@/lib/roles";
+ import { useAuth } from "@/_core/hooks/useAuth";
+ import { Bell, Clock, Copy, Edit, Eye, EyeOff, FileSpreadsheet, GripVertical, Key, Mail, Palette, Plus, RefreshCw, Save, Send, Settings, Shield, Sliders, Trash2, Users, Check, Archive, SlidersHorizontal, Megaphone, Sparkles, Webhook, DollarSign, BarChart3, Package, Undo2, Terminal, UserPlus, Layers, BarChart2, Camera, Linkedin, LifeBuoy, Activity, ClipboardList, MessageCircle, Cloud } from "lucide-react";
+@@ -396,7 +397,8 @@ export default function AdminSettings() {
+   const safeActiveTab =
+     (activeTab === "whatsapp" && !isSuperAdmin) ||
+     (activeTab === "googleDriveStorage" && !isSuperAdmin) ||
+-    (activeTab === "tara" && !canManageTara)
++    (activeTab === "tara" && !canManageTara) ||
++    (activeTab === "brands" && !isAdmin)
+       ? "preferences"
+       : activeTab;
+ 
+@@ -533,6 +535,10 @@ export default function AdminSettings() {
+               <BarChart3 size={13} />
+               <span>{isRTL ? "تدقيق لوحة التحكم" : "Dashboard Audit"}</span>
+             </TabsTrigger>}
++            {isAdmin && <TabsTrigger value="brands" className="gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-all data-[state=active]:shadow-md data-[state=active]:font-semibold">
++              <Package size={13} />
++              <span>{isRTL ? "ماركات السيارات" : "Vehicle Brands"}</span>
++            </TabsTrigger>}
+             {isAdmin && <TabsTrigger value="packages" className="gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-all data-[state=active]:shadow-md data-[state=active]:font-semibold">
+               <Package size={13} />
+               <span>{isRTL ? "الباقات" : "Packages"}</span>
+@@ -543,6 +549,9 @@ export default function AdminSettings() {
+           <TabsContent value="preferences" className="mt-4">
+             <NotificationSettingsContent />
+           </TabsContent>
++          {isAdmin && <TabsContent value="brands" className="mt-4">
++            <VehicleBrandsSettings />
++          </TabsContent>}
+ 
+           {/* ── Users Tab ── */}
+           {isAdmin && <TabsContent value="users" className="mt-4">
