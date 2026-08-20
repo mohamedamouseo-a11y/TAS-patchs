@@ -1,0 +1,48 @@
+TAS Developer Hub Runtime Exclusion Sync V2.2
+
+Patch repository:
+mohamedamouseo-a11y/TAS-patchs
+
+Patch branch:
+patch/tas-developer-hub-runtime-exclusion-sync-v2
+
+Source repository:
+mohamedamouseo-a11y/TAS
+
+Source branch:
+master
+
+Source HEAD baseline:
+90346e80e538a11c23c77f2100a32979635c8e3c
+
+Corrected patch file:
+TAS-Developer-Hub-Runtime-Exclusion-Sync-V2.2.atomic.patch
+
+Corrected patch Git blob SHA:
+8fbd36e8dbcc73af8d4cf14eed248b4225dd0629
+
+Corrected patch SHA256:
+3e5e6a55763ce4c382b52f4fbfe42523033f3ba263a40ff57c03aad5d6562ea5
+
+Exact allowed changed paths:
+1. server/routes/developerHub.ts
+2. server/services/developerHubSourceExportSafety.test.ts
+
+Reason for V2.2:
+The prior V2 artifact had invalid unified-diff hunk counts and failed `git apply --check` with `corrupt patch at line 31`. V2.2 preserves the intended code changes but regenerates the patch with valid hunk ranges/counts.
+
+Required gates:
+- patch repo branch head must match the latest V2.2 procedure commit
+- source HEAD must equal the baseline above
+- Git blob SHA must match exactly
+- SHA256 must match exactly
+- patch path count exactly 2
+- `git apply --check` PASS
+- fuzz=0, offsets=0, rejects=0
+- targeted Developer Hub source export safety tests PASS
+- official atomic deploy only
+- post-deploy Review Push + Execute Push validation
+
+No DB/schema/package/.gitignore changes.
+No Vehicle Brand changes.
+No Google Drive service changes.
