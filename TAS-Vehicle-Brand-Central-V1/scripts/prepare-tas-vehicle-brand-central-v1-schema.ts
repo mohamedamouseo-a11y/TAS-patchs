@@ -23,6 +23,12 @@ async function indexExists(table: string, indexName: string) {
 }
 
 try {
+  // Fail closed on metadata/data lock contention without requiring PROCESS privilege.
+  // lock_wait_timeout bounds metadata-lock waits for DDL; innodb_lock_wait_timeout
+  // bounds InnoDB row-lock waits defensively even though this migration performs no DML.
+  await q(`SET SESSION lock_wait_timeout = 5`);
+  await q(`SET SESSION innodb_lock_wait_timeout = 5`);
+
   for (const requiredTable of ["tas_excel_import_batches", "automotive_vehicles", "leads"]) {
     if (!(await tableExists(requiredTable))) throw new Error(`Required table missing: ${requiredTable}`);
   }
@@ -76,6 +82,7 @@ try {
 
   console.log("TAS_VEHICLE_BRAND_SCHEMA_PREP=PASS");
   console.log(`DATABASE_NAME=${databaseName}`);
+  console.log("DDL_LOCK_TIMEOUT_SECONDS=5");
   console.log("DESTRUCTIVE_OPERATIONS=NONE");
 } finally {
   await connection.end();
