@@ -1,0 +1,23 @@
+diff --git a/server/db.ts b/server/db.ts
+index 92e541a..e77982a 100644
+--- a/server/db.ts
++++ b/server/db.ts
+@@ -5710,15 +5710,15 @@ export async function listTASVehicles() {
+ }
+ 
+ export async function createTASVehicle(data: {
+-  brand: string; model: string; year?: number | null; price?: string | number | null;
++  brandId?: number | null; brand: string; model: string; year?: number | null; price?: string | number | null;
+   colors?: string[]; specifications?: { key: string; value: string }[]; branchAvailability?: string[]; faq?: { question: string; answer: string }[];
+ }) {
+   const db = await getDb();
+   if (!db) return 0;
+   const result = await db.execute(sql`
+-    INSERT INTO tas_vehicles (brand, model, year, price, colors, specifications, branchAvailability, faq)
++    INSERT INTO tas_vehicles (brandId, brand, model, year, price, colors, specifications, branchAvailability, faq)
+     VALUES (
+-      ${data.brand}, ${data.model}, ${data.year ?? null}, ${String(data.price ?? 0)},
++      ${data.brandId ?? null}, ${data.brand}, ${data.model}, ${data.year ?? null}, ${String(data.price ?? 0)},
+       ${JSON.stringify(data.colors ?? [])},
+       ${JSON.stringify(data.specifications ?? [])},
+       ${JSON.stringify(data.branchAvailability ?? [])},
