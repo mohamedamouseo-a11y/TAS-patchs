@@ -1,0 +1,48 @@
+TAS Vehicle Brand Central V2.5 — POST-DEPLOY VERIFICATION ONLY
+
+Purpose: verify the already promoted Vehicle Brand Central V2 deployment. This procedure MUST NOT deploy, patch, migrate, or modify production.
+
+Known promoted release:
+/var/www/TAS-root/releases/20260820_164149_TAS-Vehicle-Brand-Central-V2.atomic.patch_
+
+Frozen Vehicle Brand patch SHA256:
+47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d
+
+Read-only checks required:
+1. Confirm /current resolves to the promoted V2 release, exactly one TAS PM2 process is online, process cwd matches /current, and HTTP 127.0.0.1:3600 returns 200.
+2. Run both post-deploy targeted test files from the promoted release:
+   - server/services/tasVehicleBrandContract.test.ts
+   - server/services/tasExcelImportErrorBoundary.test.ts
+   Expected combined result: 8/8 PASS.
+3. Run the corrected read-only schema verifier from:
+   /var/www/TAS-root/.tas-vehicle-brand-v2/TAS-Vehicle-Brand-Central-V2/scripts/verify-tas-vehicle-brand-central-v2-schema.mjs
+   using the promoted release runtime root and .env. Require PASS and VERIFY_MODE=READ_ONLY.
+4. Reconfirm server/services/tasGoogleDriveOAuthService.ts SHA256 is:
+   86477826b08c13457760e2352025b070507b3383a23c5f1bd7479bd91ee202b4
+5. Reconfirm Vehicle Brands settings UI and Import Leads route load. Do not create a fake brand or submit an import.
+6. If there is no real active brand and/or no authenticated System.xlsx test prerequisites, report live Excel import as NOT_VERIFIED_PREREQUISITES rather than PASS.
+
+No deployment, schema preparation, data creation, database mutation, PM2 restart, /current switch, baseline refresh, package installation, or source edit is allowed.
+
+Final report fields:
+ACTIVE_RELEASE=
+CURRENT_AND_RUNNING_RELEASE_MATCH=
+PM2_PROCESS_COUNT=
+PM2_STATUS=
+HTTP_3600=
+TARGETED_TEST_FILES=
+TARGETED_POST_DEPLOY_TESTS=
+SCHEMA_VERIFY_AFTER=
+VERIFY_MODE=
+AUTOMOTIVE_OPTIONAL_INTEGRATION=
+GOOGLE_DRIVE_ENHANCEMENT_PRESERVED_AFTER=
+SETTINGS_BRANDS_UI=
+IMPORT_LEADS_PAGE=
+LIVE_EXCEL_IMPORT=
+PRODUCTION_SOURCE_MUTATIONS=NONE
+DATABASE_MUTATIONS=NONE
+PM2_MUTATIONS=NONE
+CURRENT_MUTATIONS=NONE
+PACKAGES_INSTALLED=NONE
+DEPLOYMENT_ATTEMPTED=NO
+SECRETS_EXPOSED=NO
