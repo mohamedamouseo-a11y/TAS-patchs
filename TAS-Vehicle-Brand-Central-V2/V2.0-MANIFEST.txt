@@ -1,0 +1,83 @@
+TAS VEHICLE BRAND CENTRAL V2.0 — SOURCE-DERIVED MANIFEST
+
+Built from the complete active TAS source export supplied on 2026-08-20.
+
+SOURCE_ARCHIVE_SHA256=003377e6f62b43a37d5f93b572e8e63f6747300afe9b0dd5abc50f72de73f07f
+EXPECTED_APPLICATION_PATCH_SHA256=47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d
+PREP_SCHEMA_SHA256=55fe63cc2098db2d7d0a804357122cc666c6a253ade3a724ff33e46c26e55727
+VERIFY_SCHEMA_SHA256=cdbc0be17be1d5dcf515b3ee14802c941f2b91e1d6758ebbf7eb985c6cbd390e
+
+PATCH_PARTS_IN_EXACT_ORDER:
+patches/01-VehicleBrandsSettings.patch
+patches/02-AdminSettings.patch
+patches/03-ImportLeads.patch
+patches/04-VehicleCatalogPage.patch
+patches/05-TASAdminPage.patch
+patches/06-automotiveCatalogCompat.patch
+patches/07-db.patch
+patches/08-routers.patch
+patches/09-tasExcelCompetitiveQueue.patch
+patches/10-tasVehicleBrandContract-test.patch
+patches/11-tasVehicleBrandContract.patch
+patches/12-tasVehicleBrands.patch
+patches/13-tasDb.patch
+
+EXPECTED_APPLICATION_PATHS_EXACTLY:
+client/src/components/settings/VehicleBrandsSettings.tsx
+client/src/pages/AdminSettings.tsx
+client/src/pages/ImportLeads.tsx
+client/src/pages/automotive/VehicleCatalogPage.tsx
+client/src/pages/tas/TASAdminPage.tsx
+server/automotiveCatalogCompat.ts
+server/db.ts
+server/routers.ts
+server/services/tasExcelCompetitiveQueue.ts
+server/services/tasVehicleBrandContract.test.ts
+server/services/tasVehicleBrandContract.ts
+server/services/tasVehicleBrands.ts
+server/tasDb.ts
+
+EXISTING_SOURCE_BASE_SHA256:
+c1f56b15a8988bd75de41289a823a346b7cc966d0327080e8d9713d2b9527eca  client/src/pages/AdminSettings.tsx
+597531c7ed2762b02d7f6ba8b189b1967e4f5af79cc3b686030fc021c7becb88  client/src/pages/ImportLeads.tsx
+459712839c64d6a429aeee476dd6aca626e0ca13863897ee1cb061319bc16029  client/src/pages/automotive/VehicleCatalogPage.tsx
+3c5eec641c5f7c5e95fb0cdba0ab9d387b71face0aef7c75db14e35e17e641bb  client/src/pages/tas/TASAdminPage.tsx
+83319fd6853e294775e3d5dd93bf5a75d34be0695f3ce39baac4b4b755b2c20d  server/automotiveCatalogCompat.ts
+24f71b1ddfd47548c225669e9a496d690a02be6d0d1c100c5f3105a47408ac81  server/db.ts
+75fe1694f5a32e90396f05e4d2c68cc4f14a48f46107bf73e8381b02ec27781d  server/routers.ts
+d2c0f3345949247dd389724a55467c1553db0f721353c34527cc0699c8e90608  server/services/tasExcelCompetitiveQueue.ts
+02e356757011081af42f76c0376b6d160b7e1c4792473a63b9b59ad21c4b0147  server/tasDb.ts
+
+MUST_BE_ABSENT_IN_SOURCE_BASE:
+client/src/components/settings/VehicleBrandsSettings.tsx
+server/services/tasVehicleBrandContract.test.ts
+server/services/tasVehicleBrandContract.ts
+server/services/tasVehicleBrands.ts
+
+DESIGN CORRECTION FROM FULL SOURCE REVIEW:
+- TAS core catalog uses tas_vehicles. This is the required central-brand vehicle table integration.
+- automotive_vehicles is a separate richer Automotive/Demo/Atlas path and is NOT a required production precondition.
+- Schema prep must add tas_vehicles.brandId.
+- automotive_vehicles.brandId is added only when automotive_vehicles exists; absence is an allowed SKIPPED_TABLE_NOT_PRESENT state.
+- Existing tas_vehicle_interests is vehicle-specific and is not repurposed. New import-level brand association uses tas_lead_brand_interests.
+- Duplicate-skipped Excel leads are not mutated.
+- drizzle/schema.ts remains unchanged.
+- server/services/tasExcelCompetitiveQueueSafe.ts remains unchanged.
+
+LOCAL_SOURCE_DERIVED_VALIDATION:
+TS_TSX_SYNTAX=PASS_ALL_13
+PATCH_DRY_RUN_STRIP1_FUZZ0=PASS
+GIT_APPLY_CHECK_WHITESPACE=PASS
+DRIZZLE_SCHEMA_CHANGED=NO
+EXCEL_SAFE_WRAPPER_CHANGED=NO
+
+SERVER VALIDATION STILL REQUIRED BEFORE DEPLOY:
+- exact source-base SHA validation
+- concatenated patch SHA validation
+- isolated patch dry run and apply
+- targeted tests
+- full test suite
+- official TypeScript baseline comparison against 915
+- production build
+- schema preparation/verification
+- official atomic deploy
