@@ -1,0 +1,63 @@
+diff --git a/client/src/pages/automotive/VehicleCatalogPage.tsx b/client/src/pages/automotive/VehicleCatalogPage.tsx
+index 601dd40..fdbb14b 100644
+--- a/client/src/pages/automotive/VehicleCatalogPage.tsx
++++ b/client/src/pages/automotive/VehicleCatalogPage.tsx
+@@ -7,6 +7,7 @@ import { uploadFileToSystemStorage } from "@/lib/fileStorageUpload";
+ import { useAuth } from "@/_core/hooks/useAuth";
+ import { Button } from "@/components/ui/button";
+ import { Input } from "@/components/ui/input";
++import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+ import { Textarea } from "@/components/ui/textarea";
+ import { Badge } from "@/components/ui/badge";
+ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+@@ -14,7 +15,7 @@ import { CarFront, Edit3, ImagePlus, Plus, Save, Search, Star, Trash2, X } from
+ import { toast } from "sonner";
+ 
+ const emptyForm = {
+-  brand: "", model: "", trim: "", modelYear: "", nameAr: "", nameEn: "",
++  brandId: "", brand: "", model: "", trim: "", modelYear: "", nameAr: "", nameEn: "",
+   descriptionAr: "", descriptionEn: "", bodyType: "", engine: "", transmission: "",
+   fuelType: "", driveType: "", seatingCapacity: "", doorsCount: "", colors: "",
+   cashPrice: "", currency: "EGP", availabilityStatus: "available", stockQuantity: "0",
+@@ -40,6 +41,7 @@ export default function VehicleCatalogPage() {
+   const canArchive = ["Admin", "admin", "SalesManager"].includes(String(user?.role || ""));
+   const utils = trpc.useUtils();
+   const vehiclesQ = trpc.automotive.catalog.listVehicles.useQuery({ activeOnly: false, includeArchived: true });
++  const vehicleBrandsQ = trpc.tas.vehicleBrands.list.useQuery({ activeOnly: true });
+   const createVehicle = trpc.automotive.catalog.createVehicle.useMutation();
+   const updateVehicle = trpc.automotive.catalog.updateVehicle.useMutation();
+   const archiveVehicle = trpc.automotive.catalog.archiveVehicle.useMutation();
+@@ -66,6 +68,7 @@ export default function VehicleCatalogPage() {
+     setEditing(v);
+     setForm({
+       ...emptyForm, ...v,
++      brandId: v.brandId ? String(v.brandId) : String((vehicleBrandsQ.data ?? []).find((brand: any) => brand.nameEn === v.brand)?.id ?? ""),
+       modelYear: v.modelYear ? String(v.modelYear) : "",
+       seatingCapacity: v.seatingCapacity ? String(v.seatingCapacity) : "",
+       doorsCount: v.doorsCount ? String(v.doorsCount) : "",
+@@ -79,6 +82,7 @@ export default function VehicleCatalogPage() {
+   };
+ 
+   const payload = () => ({
++    brandId: form.brandId ? Number(form.brandId) : undefined,
+     brand: form.brand.trim(), model: form.model.trim(), trim: form.trim || null,
+     modelYear: form.modelYear ? Number(form.modelYear) : null,
+     nameAr: form.nameAr || null, nameEn: form.nameEn || null,
+@@ -99,7 +103,7 @@ export default function VehicleCatalogPage() {
+   });
+ 
+   const save = async () => {
+-    if (!form.brand.trim() || !form.model.trim()) return toast.error(isRTL ? "الماركة والموديل مطلوبان" : "Brand and model are required");
++    if (!form.brandId || !form.model.trim()) return toast.error(isRTL ? "الماركة والموديل مطلوبان" : "Brand and model are required");
+     try {
+       if (editing) await updateVehicle.mutateAsync({ vehicleId: editing.id, patch: payload() });
+       else await createVehicle.mutateAsync(payload());
+@@ -168,7 +172,7 @@ export default function VehicleCatalogPage() {
+           <section className="rounded-2xl border border-[#eadfce] bg-white p-4 shadow-sm md:p-5">
+             <div className="mb-4 flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-xl bg-[#fff4d6] text-sm font-black text-[#a86900]">1</span><div><h3 className="font-black text-[#0b1b34]">{isRTL ? "البيانات الأساسية" : "Basic information"}</h3><p className="text-xs text-[#8b7a63]">{isRTL ? "تعريف السيارة كما ستظهر داخل الكتالوج وعرض السعر." : "How the vehicle appears in the catalog and quotation."}</p></div></div>
+             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+-              {editTextField("brand", isRTL?"الماركة *":"Brand *")}{editTextField("model", isRTL?"الموديل *":"Model *")}{editTextField("trim", isRTL?"الفئة":"Trim")}{editTextField("modelYear", isRTL?"سنة الموديل":"Model year", "number")}
++              <FieldGroup className="space-y-1.5"><FieldLabel className="text-xs font-bold text-[#705f48]">{isRTL?"الماركة *":"Brand *"}</FieldLabel><Select value={form.brandId} onValueChange={(brandId) => { const brand = (vehicleBrandsQ.data ?? []).find((row: any) => String(row.id) === brandId); setForm((previous: any) => ({ ...previous, brandId, brand: brand?.nameEn ?? "" })); }}><SelectTrigger className={editFieldClass}><SelectValue placeholder={isRTL?"اختر الماركة":"Select brand"}/></SelectTrigger><SelectContent>{(vehicleBrandsQ.data ?? []).map((brand: any)=><SelectItem key={brand.id} value={String(brand.id)}>{isRTL?(brand.nameAr||brand.nameEn):brand.nameEn}</SelectItem>)}</SelectContent></Select></FieldGroup>{editTextField("model", isRTL?"الموديل *":"Model *")}{editTextField("trim", isRTL?"الفئة":"Trim")}{editTextField("modelYear", isRTL?"سنة الموديل":"Model year", "number")}
+               {editTextField("nameAr", "الاسم بالعربية")}{editTextField("nameEn", "English name")}{editTextField("bodyType", isRTL?"نوع الهيكل":"Body type")}{editTextField("colors", isRTL?"الألوان مفصولة بفاصلة":"Colors, comma separated")}
+             </div>
+           </section>
