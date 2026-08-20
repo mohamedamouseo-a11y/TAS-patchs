@@ -1,0 +1,158 @@
+TAS Vehicle Brand Central V2.0 — FULL ACTIVE SOURCE + READ-ONLY SCHEMA SNAPSHOT
+
+PURPOSE
+Collect the complete real TAS active-release source tree and the production database schema structure only, so the next Vehicle Brand patch is built from the actual production application and actual DB contract. This run is READ-ONLY ONLY.
+
+DO NOT PATCH.
+DO NOT DEPLOY.
+DO NOT RUN SCHEMA PREP.
+DO NOT MODIFY DATABASE.
+DO NOT RESTART PM2.
+DO NOT SWITCH /current.
+DO NOT INSTALL PACKAGES.
+DO NOT GRANT PRIVILEGES.
+DO NOT INCLUDE SECRETS OR CUSTOMER DATA.
+
+1) Resolve active release
+ACTIVE="$(readlink -f /var/www/TAS-root/current)"
+Require exactly one TAS PM2 process online and resolved process cwd == "$ACTIVE". Verify HTTP 127.0.0.1:3600 returns 200.
+
+2) Export COMPLETE source tree from the ACTIVE release
+Create a source archive from "$ACTIVE" preserving relative paths.
+Include the complete application/source/config/test/tooling tree, including all files under directories such as:
+- client/
+- server/
+- shared/
+- drizzle/
+- scripts/
+- patches/ if present
+- tests/ if present
+- public source/config assets when they are part of source
+and root project files such as package.json, pnpm-lock.yaml, tsconfig*.json, vite.config.*, drizzle.config.*, components.json, ecosystem/config files when present.
+
+EXCLUDE ONLY generated/runtime/private material:
+- node_modules/
+- dist/
+- build/
+- .git/
+- .cache/
+- coverage/
+- uploads/
+- tmp/
+- logs/
+- *.log
+- .env
+- .env.*
+- credentials/secrets/private keys
+- runtime databases/dumps/backups
+- customer uploaded files
+
+Do NOT cherry-pick selected source files. The archive must contain the COMPLETE source tree after the exclusions above.
+
+3) Produce complete source manifest
+Create FULL-SOURCE-MANIFEST.txt containing for every archived file:
+SHA256  relative/path
+Sort by relative path.
+Also report total file count and archive SHA256.
+
+4) Export READ-ONLY DB schema structure from tas_crm
+Read DATABASE_URL securely without printing it. Confirm derived DB name is tas_crm.
+Export SCHEMA STRUCTURE ONLY, NO ROW DATA.
+Use information_schema read-only queries to output for every table in tas_crm:
+- table name
+- engine
+- columns: name, type, nullable, default metadata where safely available, key flag, extra
+- indexes: table, index name, uniqueness, ordered indexed columns
+- foreign-key metadata if any
+
+Also explicitly report whether these objects exist:
+- automotive_vehicles
+- tas_excel_import_batches
+- leads
+- tas_vehicle_brands
+- tas_lead_vehicle_interests
+
+Do NOT output table rows.
+Do NOT output SQL INSERTs.
+Do NOT output customer values.
+Do NOT run SHOW PROCESSLIST or require PROCESS privilege.
+
+Save as:
+DB-SCHEMA-STRUCTURE.txt
+
+5) Source search report
+Create SOURCE-SEARCH-REPORT.txt by searching the COMPLETE active source for these literal concepts and listing matching FILE PATHS + LINE NUMBERS + short sanitized source snippets only:
+- automotive_vehicles
+- automotiveVehicles
+- automotive catalog
+- brandId
+- vehicle brand
+- tas_excel_import_batches
+- tas_lead_vehicle_interests
+- CREATE TABLE
+- schema preparation
+- schema verifier
+
+This is read-only source inspection.
+
+6) Runtime facts
+Create RUNTIME-FACTS.txt containing only non-secret facts:
+ACTIVE_RELEASE_REALPATH=
+PM2_CWD_REALPATH=
+PM2_SCRIPT_REALPATH=
+CURRENT_AND_RUNNING_RELEASE_MATCH=
+HTTP_3600=
+NODE_VERSION=
+PNPM_VERSION=
+PACKAGE_TYPE=
+SOURCE_FILE_COUNT=
+SOURCE_ARCHIVE_SHA256=
+DATABASE_NAME=tas_crm
+AUTOMOTIVE_VEHICLES_TABLE_EXISTS=YES/NO
+TAS_EXCEL_IMPORT_BATCHES_TABLE_EXISTS=YES/NO
+LEADS_TABLE_EXISTS=YES/NO
+
+7) Secret scan
+Before returning files, inspect archive path list and text outputs to ensure none contain:
+.env
+password
+secret token values
+private keys
+DATABASE_URL value
+cookies/session values
+customer rows
+SQL dumps
+uploads
+node_modules/dist
+
+Do not attempt to inspect binary customer files; they must already be excluded.
+
+8) Output files
+Return/upload ALL FOUR files:
+1. TAS-FULL-ACTIVE-SOURCE.tar.gz
+2. FULL-SOURCE-MANIFEST.txt
+3. DB-SCHEMA-STRUCTURE.txt
+4. SOURCE-SEARCH-REPORT.txt
+5. RUNTIME-FACTS.txt
+
+Preferred staging paths:
+/var/www/TAS-root/.tas-vehicle-brand-full-source/TAS-FULL-ACTIVE-SOURCE.tar.gz
+/var/www/TAS-root/.tas-vehicle-brand-full-source/FULL-SOURCE-MANIFEST.txt
+/var/www/TAS-root/.tas-vehicle-brand-full-source/DB-SCHEMA-STRUCTURE.txt
+/var/www/TAS-root/.tas-vehicle-brand-full-source/SOURCE-SEARCH-REPORT.txt
+/var/www/TAS-root/.tas-vehicle-brand-full-source/RUNTIME-FACTS.txt
+
+FINAL REQUIREMENTS
+FULL_SOURCE_EXPORT=PASS
+FULL_SOURCE_NOT_SELECTED_SUBSET=YES
+DB_SCHEMA_EXPORT=READ_ONLY
+DB_ROWS_EXPORTED=NO
+PRODUCTION_SOURCE_MUTATIONS=NONE
+DATABASE_MUTATIONS=NONE
+PM2_MUTATIONS=NONE
+CURRENT_MUTATIONS=NONE
+PACKAGES_INSTALLED=NONE
+SECRETS_INCLUDED=NO
+DEPLOYMENT_ATTEMPTED=NO
+
+Stop after uploading these files. Do not propose or execute a patch in this run.
