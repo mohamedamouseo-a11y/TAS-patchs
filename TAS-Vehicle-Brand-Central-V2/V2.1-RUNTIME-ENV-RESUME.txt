@@ -1,0 +1,73 @@
+TAS Vehicle Brand Central V2.1 — Runtime Env Resume
+
+This resumes V2.0 after the database environment propagation failure.
+
+The V2 application patch itself is unchanged and already passed:
+- exact 13-path validation
+- fuzz=0 isolated application
+- targeted tests
+- full suite
+- TypeScript baseline gate
+- production build
+
+Do NOT rebuild or modify the application patch if its SHA remains:
+47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d
+
+The only correction in V2.1 is that schema preparation and verification now load the exact active TAS runtime .env using the same production runtime mechanism already present in TAS scripts.
+
+Required branch:
+patch/tas-vehicle-brand-central-v1
+
+1. Fetch authoritative remote branch and use the latest remote head.
+2. Verify production health and active release are unchanged.
+3. Verify the assembled V2 application patch SHA is exactly 47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d.
+4. Do not rerun application build/test/typecheck gates unless the application patch SHA or active source base changed.
+5. Refresh the two scripts from TAS-Vehicle-Brand-Central-V2/scripts:
+   - prepare-tas-vehicle-brand-central-v2-schema.mjs
+   - verify-tas-vehicle-brand-central-v2-schema.mjs
+6. Resolve ACTIVE with readlink -f /var/www/TAS-root/current.
+7. Verify ACTIVE/.env exists as the official runtime env file or symlink and do not print or copy its contents.
+8. Run schema prep only with:
+   TAS_RUNTIME_ROOT="$ACTIVE" TAS_RUNTIME_ENV_FILE="$ACTIVE/.env" TAS_EXPECTED_DATABASE_NAME=tas_crm node <staged-kit>/scripts/prepare-tas-vehicle-brand-central-v2-schema.mjs
+9. Require:
+   TAS_VEHICLE_BRAND_V2_SCHEMA_PREP=PASS
+   DATABASE_NAME=tas_crm
+   RUNTIME_ENV_SOURCE=ACTIVE_RELEASE_DOTENV
+   DEPENDENCY_RESOLUTION=ACTIVE_RELEASE
+   DDL_LOCK_TIMEOUT_SECONDS=5
+   DESTRUCTIVE_OPERATIONS=NONE
+10. automotive_vehicles remains optional. Its absence must produce SKIPPED_TABLE_NOT_PRESENT and must not fail.
+11. Run read-only schema verify using the same runtime env path:
+   TAS_RUNTIME_ROOT="$ACTIVE" TAS_RUNTIME_ENV_FILE="$ACTIVE/.env" TAS_EXPECTED_DATABASE_NAME=tas_crm node <staged-kit>/scripts/verify-tas-vehicle-brand-central-v2-schema.mjs
+12. Require schema verify PASS and VERIFY_MODE=READ_ONLY.
+13. Recheck application patch SHA and production health.
+14. Deploy only through the official TAS atomic deploy script with APP_DEPLOY_ROOT=/var/www/TAS-root, PM2_APP_NAME=TAS, and DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6.
+15. No manual PM2 restart, symlink switch, source edit, privilege grant, global DB variable change, or destructive DB operation.
+16. Run the post-deploy targeted tests and functional checks from the V2.0 procedure.
+
+Final report must include:
+REMOTE_HEAD=
+APPLICATION_PATCH_SHA256=
+APPLICATION_PATCH_REBUILT=NO
+ACTIVE_RELEASE_BEFORE=
+PRODUCTION_HEALTH_BEFORE=
+RUNTIME_ENV_FILE_RESOLVED=
+RUNTIME_ENV_CONTENT_EXPOSED=NO
+SCHEMA_PREP=
+RUNTIME_ENV_SOURCE=
+AUTOMOTIVE_OPTIONAL_INTEGRATION=
+SCHEMA_VERIFY=
+ATOMIC_DEPLOY=
+CANDIDATE_PROMOTED=
+ACTIVE_RELEASE_AFTER=
+PM2_STATUS=
+HTTP_3600=
+CURRENT_AND_RUNNING_RELEASE_MATCH_AFTER=
+TARGETED_POST_DEPLOY_TESTS=
+SETTINGS_BRANDS_UI=
+TAS_CATALOG_CENTRAL_BRAND=
+EXCEL_REQUIRES_BRAND=
+DUPLICATE_LEAD_MUTATED=NO
+RAW_SQL_EXPOSURE=NO
+DESTRUCTIVE_DB_OPERATIONS=NONE
+SECRETS_EXPOSED=NO
