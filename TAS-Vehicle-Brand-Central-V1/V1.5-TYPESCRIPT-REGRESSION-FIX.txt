@@ -1,0 +1,45 @@
+TAS Vehicle Brand Central V1.5 — TypeScript Regression Fix
+
+Purpose:
+Fix the five new TypeScript diagnostics introduced by inferred row typing in templates/server/services/tasVehicleBrands.ts.
+
+Observed trusted gate:
+TYPECHECK_BASELINE=915
+TYPECHECK_CANDIDATE=920
+NEW_TYPESCRIPT_DIAGNOSTICS=YES
+
+Root cause:
+normalizeBrandRow() inferred a return shape containing only explicitly overwritten properties plus an unhelpful spread type. Consumers then reported missing typed properties such as code, nameEn, and nameAr, including use through requireActiveTASVehicleBrand().
+
+Fix:
+- Add explicit TASVehicleBrandRow type.
+- Explicitly normalize code, nameEn, and nameAr.
+- Annotate normalizeBrandRow(row): TASVehicleBrandRow.
+- No runtime feature contract change.
+- No database schema change.
+- No baseline weakening.
+
+IMPORTANT:
+Because the application template changed, the previously frozen atomic patch SHA256 8bbb669a3cba5666e053881715e2a76b4585f7a6af25e22fd814c8ae6c28c331 is obsolete and MUST NOT be deployed.
+
+Required procedure:
+1. Refresh remote branch first.
+2. Re-stage the patch kit from the latest branch HEAD.
+3. Apply V1.1 builder correction with --strip=2 to staged kit only.
+4. Build a NEW atomic application patch from the exact unchanged active production release.
+5. Freeze and report the NEW patch SHA256.
+6. Validate exact 9 application paths.
+7. Fresh fuzz=0/offset=0/reject=0 dry-run.
+8. Run 6/6 brand tests, 2/2 Excel boundary tests, then full suite.
+9. Run TypeScript with the official TAS envelope:
+   MALLOC_ARENA_MAX=2
+   NODE_OPTIONS=--max-old-space-size=3072
+10. Require candidate <= 915 and NEW_TYPESCRIPT_DIAGNOSTICS=0.
+11. Only then continue build, DB safety, schema prep/verify, and official atomic deploy.
+
+Safety:
+- Never deploy the obsolete frozen patch.
+- Do not modify TAS main/master.
+- Do not weaken the 915 baseline.
+- Do not make DB changes before all code gates pass.
+- Do not manually mutate PM2 or /current.
