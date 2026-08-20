@@ -1,0 +1,38 @@
+TAS Developer Hub Backups Snapshot Fix V1
+
+Source repository:
+mohamedamouseo-a11y/TAS
+
+Source branch:
+master
+
+Source HEAD used for patch construction:
+38b6ed88774a45f143d4574f49334cb85388534a
+
+Atomic patch:
+TAS-Developer-Hub-Backups-Snapshot-Fix-V1.atomic.patch
+
+Expected SHA256:
+1bcba153eb1d36642b4dedf60e6347e5de4106fb19ae9704f1d884cf5c0b64ad
+
+Exact allowed changed paths:
+1. server/routes/developerHub.ts
+2. server/services/developerHubSourceExportSafety.test.ts
+3. server/services/developerHubSourceExportSafety.ts
+
+Purpose:
+Exclude only the repository-root backups runtime tree from Developer Hub Review/Execute Git mutation handling while preserving all existing generic untracked-path, traversal, symlink and source-export safety controls.
+
+Required behavior:
+- backups => excluded
+- backups/... => excluded
+- backups2 => not excluded
+- foo/backups => not excluded
+- traversal forms => not excluded by backup predicate and remain subject to existing rejection
+- unsafe symlinks outside root backups => remain rejected
+- root backups must not be staged, committed, pushed, deleted by rollback clean, or copied into rollback snapshot
+
+No database changes.
+No drizzle/schema.ts changes.
+No Vehicle Brand changes.
+No Google Drive service changes.
