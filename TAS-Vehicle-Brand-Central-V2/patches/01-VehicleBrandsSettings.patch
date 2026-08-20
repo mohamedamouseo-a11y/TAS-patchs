@@ -1,0 +1,90 @@
+diff --git a/client/src/components/settings/VehicleBrandsSettings.tsx b/client/src/components/settings/VehicleBrandsSettings.tsx
+new file mode 100644
+index 0000000..3d643a3
+--- /dev/null
++++ b/client/src/components/settings/VehicleBrandsSettings.tsx
+@@ -0,0 +1,84 @@
++import { Badge } from "@/components/ui/badge";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { Input } from "@/components/ui/input";
++import { Switch } from "@/components/ui/switch";
++import { useLanguage } from "@/contexts/LanguageContext";
++import { trpc } from "@/lib/trpc";
++import { CarFront, Pencil, Plus, RotateCcw, Save } from "lucide-react";
++import { useMemo, useState } from "react";
++import { toast } from "sonner";
++
++type FormState = {
++  id?: number;
++  code: string;
++  nameEn: string;
++  nameAr: string;
++  aliases: string;
++  sortOrder: string;
++  isActive: boolean;
++};
++
++const EMPTY: FormState = { code: "", nameEn: "", nameAr: "", aliases: "", sortOrder: "0", isActive: true };
++
++export default function VehicleBrandsSettings() {
++  const { isRTL } = useLanguage();
++  const utils = trpc.useUtils();
++  const [form, setForm] = useState<FormState>(EMPTY);
++  const brandsQuery = trpc.tas.vehicleBrands.list.useQuery({ activeOnly: false });
++  const createMutation = trpc.tas.vehicleBrands.create.useMutation({
++    onSuccess: async () => {
++      await utils.tas.vehicleBrands.list.invalidate();
++      setForm(EMPTY);
++      toast.success(isRTL ? "تمت إضافة الماركة" : "Vehicle brand added");
++    },
++    onError: (error) => toast.error(error.message),
++  });
++  const updateMutation = trpc.tas.vehicleBrands.update.useMutation({
++    onSuccess: async () => {
++      await utils.tas.vehicleBrands.list.invalidate();
++      setForm(EMPTY);
++      toast.success(isRTL ? "تم تحديث الماركة" : "Vehicle brand updated");
++    },
++    onError: (error) => toast.error(error.message),
++  });
++
++  const isSaving = createMutation.isPending || updateMutation.isPending;
++  const brands = useMemo(() => brandsQuery.data ?? [], [brandsQuery.data]);
++  const submit = () => {
++    const payload = {
++      code: form.code,
++      nameEn: form.nameEn,
++      nameAr: form.nameAr,
++      aliases: form.aliases.split(",").map((value) => value.trim()).filter(Boolean),
++      sortOrder: Number(form.sortOrder || 0),
++      isActive: form.isActive,
++    };
++    if (!payload.code.trim() || !payload.nameEn.trim()) {
++      toast.error(isRTL ? "الكود والاسم الإنجليزي مطلوبان" : "Code and English name are required");
++      return;
++    }
++    if (form.id) updateMutation.mutate({ id: form.id, ...payload });
++    else createMutation.mutate(payload);
++  };
++
++  return <Card className="border-border/60 shadow-sm">
++    <CardHeader className="pb-4">
++      <CardTitle className="flex items-center gap-2 text-base"><CarFront size={18}/>{isRTL ? "ماركات السيارات" : "Vehicle Brands"}</CardTitle>
++      <p className="text-xs text-muted-foreground">{isRTL ? "المصدر المركزي للمركات المستخدمة في استيراد Excel وكتالوج TAS." : "Central source for brands used by Excel import and the TAS catalog."}</p>
++    </CardHeader>
++    <CardContent className="space-y-5">
++      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6 items-end">
++        <div><label className="text-xs font-medium">{isRTL ? "الكود *" : "Code *"}</label><Input className="mt-1" value={form.code} onChange={(e)=>setForm(v=>({...v,code:e.target.value}))} placeholder="TOYOTA"/></div>
++        <div><label className="text-xs font-medium">{isRTL ? "الاسم الإنجليزي *" : "English name *"}</label><Input className="mt-1" value={form.nameEn} onChange={(e)=>setForm(v=>({...v,nameEn:e.target.value}))} placeholder="Toyota"/></div>
++        <div><label className="text-xs font-medium">{isRTL ? "الاسم العربي" : "Arabic name"}</label><Input className="mt-1" value={form.nameAr} onChange={(e)=>setForm(v=>({...v,nameAr:e.target.value}))} placeholder="تويوتا"/></div>
++        <div><label className="text-xs font-medium">{isRTL ? "أسماء بديلة" : "Aliases"}</label><Input className="mt-1" value={form.aliases} onChange={(e)=>setForm(v=>({...v,aliases:e.target.value}))} placeholder="Toyota Motor, تويوتا"/></div>
++        <div><label className="text-xs font-medium">{isRTL ? "الترتيب" : "Sort order"}</label><Input className="mt-1" type="number" value={form.sortOrder} onChange={(e)=>setForm(v=>({...v,sortOrder:e.target.value}))}/></div>
++        <div className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(checked)=>setForm(v=>({...v,isActive:checked}))}/><span className="text-xs">{isRTL ? "نشطة" : "Active"}</span><Button size="sm" onClick={submit} disabled={isSaving}>{form.id?<Save size={14}/>:<Plus size={14}/>}<span className="ms-1">{form.id?(isRTL?"حفظ":"Save"):(isRTL?"إضافة":"Add")}</span></Button>{form.id&&<Button size="icon" variant="outline" onClick={()=>setForm(EMPTY)}><RotateCcw size={14}/></Button>}</div>
++      </div>
++      <div className="rounded-xl border border-border/60 overflow-hidden">
++        {brandsQuery.isLoading ? <div className="p-5 text-sm text-muted-foreground">{isRTL?"جاري التحميل...":"Loading..."}</div> : brands.length===0 ? <div className="p-5 text-sm text-muted-foreground">{isRTL?"لا توجد ماركات بعد.":"No vehicle brands yet."}</div> : <div className="divide-y divide-border/60">{brands.map((brand:any)=><div key={brand.id} className="p-3 flex flex-wrap items-center justify-between gap-3"><div><div className="flex items-center gap-2 flex-wrap"><span className="font-semibold text-sm">{isRTL?(brand.nameAr||brand.nameEn):brand.nameEn}</span><Badge variant="outline">{brand.code}</Badge><Badge variant={Number(brand.isActive)===1?"default":"secondary"}>{Number(brand.isActive)===1?(isRTL?"نشطة":"Active"):(isRTL?"غير نشطة":"Inactive")}</Badge></div><div className="text-xs text-muted-foreground mt-1">{(brand.aliases??[]).length?(brand.aliases??[]).join(" • "):(isRTL?"بدون أسماء بديلة":"No aliases")}</div></div><Button size="sm" variant="outline" onClick={()=>setForm({id:Number(brand.id),code:brand.code??"",nameEn:brand.nameEn??"",nameAr:brand.nameAr??"",aliases:(brand.aliases??[]).join(", "),sortOrder:String(brand.sortOrder??0),isActive:Number(brand.isActive)===1})}><Pencil size={14}/><span className="ms-1">{isRTL?"تعديل":"Edit"}</span></Button></div>)}</div>}
++      </div>
++    </CardContent>
++  </Card>;
++}
