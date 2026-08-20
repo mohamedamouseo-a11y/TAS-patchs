@@ -1,0 +1,39 @@
+TAS Vehicle Brand Central V1.4 — Source Refresh Procedure Correction
+
+Purpose:
+Prevent stale local/staging Git checkouts from being mistaken for the current remote patch branch head.
+
+Observed failure:
+The deployment procedure expected branch head 3dc3f20f030bb5c6e2d7a1389d313eed248f0f4a, while the local checkout reported d1a1d0a46272540fee8f9da572bd77e48b5039ed.
+
+Remote verification confirmed V1.3 exists on branch patch/tas-vehicle-brand-central-v1. Therefore source verification must refresh origin before evaluating the branch head.
+
+Required safe source verification procedure:
+
+1. Work only inside the dedicated staging checkout for TAS-patchs.
+2. Do not modify production application source.
+3. Fetch the exact remote branch explicitly:
+
+   git fetch --prune origin patch/tas-vehicle-brand-central-v1
+
+4. Determine the authoritative remote head using:
+
+   git rev-parse refs/remotes/origin/patch/tas-vehicle-brand-central-v1
+
+5. Require exact expected head supplied by the deployment prompt.
+6. If the local branch is stale but the remote head is correct, refresh only the disposable staging checkout from the remote branch. Do not force-update unrelated branches or production repositories.
+7. Verify required correction files directly from the refreshed staging checkout.
+
+Safety rules:
+- Never infer remote HEAD from a previously cloned local branch without fetch.
+- Never push or modify TAS main repository.
+- Never alter /var/www/TAS-root/current for source verification.
+- Never alter PM2 or database for source verification.
+- If the fetched remote head differs from the expected head, STOP fail-closed.
+
+Expected:
+REMOTE_FETCH=PASS
+AUTHORITATIVE_REMOTE_HEAD=<expected commit>
+LOCAL_CHECKOUT_WAS_STALE=YES/NO
+STAGING_CHECKOUT_REFRESHED=YES/NO
+SOURCE_VERIFICATION=PASS
