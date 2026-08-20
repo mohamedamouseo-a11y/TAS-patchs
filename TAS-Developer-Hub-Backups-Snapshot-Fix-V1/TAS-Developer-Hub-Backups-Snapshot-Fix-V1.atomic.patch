@@ -1,0 +1,133 @@
+diff --git a/server/routes/developerHub.ts b/server/routes/developerHub.ts
+--- a/server/routes/developerHub.ts
++++ b/server/routes/developerHub.ts
+@@ -30,8 +30,11 @@
+   type GitChangeEntry,
+ } from "../services/developerHubGitHubSecurity";
+ import {
++  DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN,
++  DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS,
+   getUnsafeSourceLinkReason,
+   isAtomicDeploymentArtifactPath,
++  isExcludedDeveloperHubRuntimePath,
+ } from "../services/developerHubSourceExportSafety";
+ import {
+   assertSafeRepositoryGitConfiguration as assertSafeRepositoryGitConfigurationRuntime,
+@@ -1945,6 +1948,7 @@
+   for (const entry of untrackedEntries) {
+     const source = path.resolve(WORK_TREE_DIR, entry.path);
+     if (!source.startsWith(`${path.resolve(WORK_TREE_DIR)}${path.sep}`)) throw new Error("Unsafe untracked file path.");
++    if (isExcludedDeveloperHubRuntimePath(entry.path)) continue;
+     const stat = await fs.lstat(source);
+     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Cannot snapshot unsafe untracked path: ${entry.path}`);
+     copiedBytes += stat.size;
+@@ -1965,7 +1969,7 @@
+     async restore() {
+       await runGit(["merge", "--abort"], env).catch(() => undefined);
+       await runGit(["reset", "--hard", head], env);
+-      await runGit(["clean", "-fd", "--", "."], env);
++      await runGit(["clean", "-fd", "-e", DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN, "--", "."], env);
+       if (patchPath) await runGit(["apply", "--binary", "--whitespace=nowarn", patchPath], env);
+       for (const item of untracked) {
+         const source = path.join(untrackedDir, item.path);
+@@ -2019,7 +2023,9 @@
+ ) {
+   if (!/^[a-f0-9]{40,64}$/i.test(expectedTree)) throw new Error("Invalid reviewed project tree.");
+   const identityEnv = withDeveloperHubGitIdentity(env);
+-  await runGit(["add", "-A", "--", "."], identityEnv);
++  await runGit([
++    "add", "-A", "--", ".", ...DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS,
++  ], identityEnv);
+   await runGit(["diff", "--cached", "--check"], identityEnv);
+   const stagedTree = await runGit(["write-tree"], identityEnv).then(({ stdout }) => stdout.trim());
+   if (stagedTree !== expectedTree) {
+@@ -2248,6 +2254,7 @@
+ 
+ function isExcludedSourceDirectory(relativePath: string) {
+   const normalized = normalizeZipPath(relativePath).toLowerCase();
++  if (isExcludedDeveloperHubRuntimePath(normalized)) return true;
+   if (isAtomicDeploymentArtifactPath(normalized)) return true;
+   const segments = normalized.split("/").filter(Boolean);
+   const baseName = segments[segments.length - 1] || "";
+diff --git a/server/services/developerHubSourceExportSafety.test.ts b/server/services/developerHubSourceExportSafety.test.ts
+--- a/server/services/developerHubSourceExportSafety.test.ts
++++ b/server/services/developerHubSourceExportSafety.test.ts
+@@ -2,8 +2,11 @@
+ import path from "node:path";
+ import { describe, expect, it } from "vitest";
+ import {
++  DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN,
++  DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS,
+   getUnsafeSourceLinkReason,
+   isAtomicDeploymentArtifactPath,
++  isExcludedDeveloperHubRuntimePath,
+ } from "./developerHubSourceExportSafety";
+ 
+ const routeSource = fs.readFileSync(
+@@ -35,3 +38,35 @@
+     expect(routeSource).not.toContain('throw new Error(`Source export aborted: ${relativePath} is a hard-linked file.`)');
+   });
+ });
++
++describe("Developer Hub root backups exclusion safety", () => {
++  it("matches only the repository-root backups tree", () => {
++    expect(isExcludedDeveloperHubRuntimePath("backups")).toBe(true);
++    expect(isExcludedDeveloperHubRuntimePath("backups/file.zip")).toBe(true);
++    expect(isExcludedDeveloperHubRuntimePath("backups/nested/file")).toBe(true);
++    expect(isExcludedDeveloperHubRuntimePath("BACKUPS/file")).toBe(true);
++
++    expect(isExcludedDeveloperHubRuntimePath("backups2")).toBe(false);
++    expect(isExcludedDeveloperHubRuntimePath("foo/backups")).toBe(false);
++    expect(isExcludedDeveloperHubRuntimePath("../backups")).toBe(false);
++    expect(isExcludedDeveloperHubRuntimePath("backups/../outside")).toBe(false);
++    expect(isExcludedDeveloperHubRuntimePath("/backups")).toBe(false);
++    expect(isExcludedDeveloperHubRuntimePath("backups//file")).toBe(false);
++  });
++
++  it("uses anchored Git path exclusions for commit and rollback mutation paths", () => {
++    expect(DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS).toEqual([
++      ":(top,exclude)backups",
++    ]);
++    expect(DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN).toBe("/backups");
++    expect(routeSource).toContain("if (isExcludedDeveloperHubRuntimePath(entry.path)) continue;");
++    expect(routeSource).toContain("if (isExcludedDeveloperHubRuntimePath(normalized)) return true;");
++    expect(routeSource).toContain("...DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS");
++    expect(routeSource).toContain("DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN");
++  });
++
++  it("keeps generic unsafe-untracked and traversal protections in place", () => {
++    expect(routeSource).toContain('throw new Error("Unsafe untracked file path.")');
++    expect(routeSource).toContain("Cannot snapshot unsafe untracked path:");
++  });
++});
+diff --git a/server/services/developerHubSourceExportSafety.ts b/server/services/developerHubSourceExportSafety.ts
+--- a/server/services/developerHubSourceExportSafety.ts
++++ b/server/services/developerHubSourceExportSafety.ts
+@@ -1,5 +1,27 @@
+ function normalizeRelativePath(filePath: string) {
+   return filePath.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
++}
++
++export const DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS = [
++  ":(top,exclude)backups",
++] as const;
++
++export const DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN = "/backups";
++
++/**
++ * Runtime backup storage is mounted at the repository-root `backups` path.
++ * Developer Hub must treat only that exact root tree as excluded. Traversal,
++ * absolute paths, sibling names such as `backups2`, and nested `foo/backups`
++ * are deliberately not matched by this predicate.
++ */
++export function isExcludedDeveloperHubRuntimePath(relativePath: string) {
++  const slashNormalized = relativePath.replace(/\\/g, "/");
++  if (!slashNormalized || slashNormalized.startsWith("/") || slashNormalized.includes("\0")) return false;
++  const normalized = slashNormalized.replace(/\/+$/, "");
++  if (!normalized) return false;
++  const segments = normalized.split("/");
++  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return false;
++  return segments[0].toLowerCase() === "backups";
+ }
+ 
+ /**
