@@ -1,0 +1,127 @@
+TAS Vehicle Brand Central V1.9 — Source-derived deployment procedure
+
+This procedure is based on the sanitized snapshot collected from the real active TAS production release. Do not use older V1.1-V1.7 workaround procedures for builder/module resolution.
+
+PATCH REPOSITORY: mohamedamouseo-a11y/TAS-patchs
+PATCH BRANCH: patch/tas-vehicle-brand-central-v1
+PRODUCTION ROOT: /var/www/TAS-root
+EXPECTED DB: tas_crm
+FROZEN APPLICATION PATCH: /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1.atomic.patch
+FROZEN APPLICATION PATCH SHA256: 6a11a031ae5e9df505bd258a486db1355929dabe26d6d686e9508c4af812f717
+SOURCE BASELINE FILE: TAS-Vehicle-Brand-Central-V1/V1.9-SOURCE-BASELINE-SHA256.txt
+
+FAIL CLOSED. No TAS main/master changes, no global package installs, no Node/NVM changes, no new DB privileges, no PROCESS grant, no destructive DB commands, no manual current switch, no manual PM2 restart, and no secret/raw-customer-data output.
+
+1. Refresh the patch branch from origin. Treat the remote branch as authoritative. Stage the latest TAS-Vehicle-Brand-Central-V1 kit. Do not apply V1.1-BUILDER-FIX.patch; the current builder is directly corrected and source-project aware.
+
+2. Resolve ACTIVE with `readlink -f /var/www/TAS-root/current`. Verify one TAS PM2 process is online, HTTP 3600 returns 200, and resolved PM2 process cwd equals ACTIVE.
+
+3. Verify the ACTIVE source against every SHA256 entry in V1.9-SOURCE-BASELINE-SHA256.txt. In particular verify package.json, tsconfig.json, drizzle/schema.ts, deploy-active-release.sh, AdminSettings.tsx, ImportLeads.tsx, automotiveCatalogCompat.ts, routers.ts, tasExcelCompetitiveQueue.ts, tasExcelCompetitiveQueueSafe.ts, and the Excel error-boundary files. If any hash differs, STOP with SOURCE_BASE_CHANGED=YES and collect a new sanitized source snapshot. Do not continue on a different source base.
+
+4. Verify runtime dependency facts from ACTIVE without modifying anything: package type=module; mysql2, tsx and typescript are declared; mysql2/promise resolves using createRequire from ACTIVE/package.json. No dependency needs to resolve from the patch-kit directory.
+
+5. Verify the frozen application patch exists and SHA256 is exactly `6a11a031ae5e9df505bd258a486db1355929dabe26d6d686e9508c4af812f717`. If it differs or is missing, STOP. Do not silently rebuild. The application patch has already passed exact 9-path validation, zero-fuzz dry run, targeted brand tests 6/6, Excel error-boundary tests 2/2, full suite 64 files/405 tests, TypeScript baseline 915/915 with zero new diagnostics, and build on this same source base.
+
+6. Securely make the existing TAS production DATABASE_URL available to the schema process without printing it. Derive only its database name and require `tas_crm`.
+
+7. Run schema preparation with Node directly, not tsx:
+
+ACTIVE="$(readlink -f /var/www/TAS-root/current)"
+TAS_RUNTIME_ROOT="$ACTIVE" \
+TAS_EXPECTED_DATABASE_NAME=tas_crm \
+node /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/scripts/prepare-tas-vehicle-brand-central-v1-schema.mjs
+
+The script must resolve mysql2/promise from ACTIVE via createRequire. Require output:
+TAS_VEHICLE_BRAND_SCHEMA_PREP=PASS
+DATABASE_NAME=tas_crm
+DEPENDENCY_RESOLUTION=ACTIVE_RELEASE
+DDL_LOCK_TIMEOUT_SECONDS=5
+DESTRUCTIVE_OPERATIONS=NONE
+
+Allowed schema changes only: create tas_vehicle_brands; nullable tas_excel_import_batches.brandId + intended index; nullable automotive_vehicles.brandId + intended index; create tas_lead_vehicle_interests + intended indexes. No FK, backfill, DELETE, DROP, TRUNCATE, or business-row DML.
+
+If a metadata/lock wait timeout or another DB error occurs, STOP. Do not raise timeout or retry automatically. Because MySQL DDL can auto-commit, report exactly which additive objects are present using read-only information_schema checks; do not attempt destructive rollback.
+
+8. Run read-only schema verification with Node directly:
+
+ACTIVE="$(readlink -f /var/www/TAS-root/current)"
+TAS_RUNTIME_ROOT="$ACTIVE" \
+TAS_EXPECTED_DATABASE_NAME=tas_crm \
+node /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/scripts/verify-tas-vehicle-brand-central-v1-schema.mjs
+
+Require:
+TAS_VEHICLE_BRAND_SCHEMA_VERIFY=PASS
+DATABASE_NAME=tas_crm
+DEPENDENCY_RESOLUTION=ACTIVE_RELEASE
+VERIFY_MODE=READ_ONLY
+
+9. Recheck frozen application patch SHA256 immediately before deployment. It must still equal `6a11a031ae5e9df505bd258a486db1355929dabe26d6d686e9508c4af812f717`.
+
+10. Unset inherited deployment overrides:
+unset TYPECHECK_NODE_OPTIONS TEST_NODE_OPTIONS BUILD_NODE_OPTIONS NODE_OPTIONS DEPLOY_TYPECHECK_BASELINE_BOOTSTRAP DEPLOY_INFRA_UPGRADE_PATCH_SHA256
+
+11. Deploy only through the official atomic script:
+
+APP_DEPLOY_ROOT=/var/www/TAS-root \
+PM2_APP_NAME=TAS \
+DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6 \
+bash /var/www/TAS-root/current/scripts/deploy-active-release.sh \
+/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1.atomic.patch
+
+Do not manually promote, restart PM2, or switch current. If the official gate fails, STOP and return its sanitized first failure.
+
+12. After official promotion require exactly one TAS process online, HTTP 3600=200, stability PASS, PM2 save PASS, and resolved current equals resolved process cwd.
+
+13. From the promoted release run:
+pnpm vitest run server/services/tasVehicleBrandContract.test.ts server/services/tasExcelImportErrorBoundary.test.ts
+Require 8/8 PASS.
+
+14. Functional validation: Settings > Vehicle Brands must render Code, English Name, Arabic Name, Aliases, Active/Inactive and Sort Order. Do not create fake production brands. If there is no real active brand, report NO_ACTIVE_BRAND_FOR_FUNCTIONAL_TEST=YES.
+
+15. If a real active brand exists, verify active-only import dropdown, inactive filtering, missing/invalid/inactive brand rejection, brandId persistence, and automotive legacy text compatibility. If original System.xlsx plus valid authenticated access are available, preview it (historically expected 32 rows) and run a real import only with a real active brand and valid agent selection. Verify duplicate skipped leads are not mutated. If authentication is unavailable, do not claim live Excel import success.
+
+FINAL REPORT:
+REMOTE_HEAD=
+ACTIVE_RELEASE=
+SOURCE_BASE_CHANGED=YES/NO
+SOURCE_BASELINE_MATCH=PASS/FAIL
+RUNTIME_MYSQL2_RESOLUTION_FROM_ACTIVE=PASS/FAIL
+APPLICATION_PATCH_SHA256=
+APPLICATION_PATCH_REBUILT=NO
+PRODUCTION_HEALTH_BEFORE=
+DERIVED_DATABASE_NAME=
+SCHEMA_PREP=
+SCHEMA_PREP_DEPENDENCY_RESOLUTION=
+SCHEMA_VERIFY=
+DESTRUCTIVE_DB_OPERATIONS=NONE
+EXISTING_BUSINESS_ROWS_MUTATED_BY_SCHEMA_PREP=NO
+ATOMIC_DEPLOY=
+CANDIDATE_PROMOTED=
+ACTIVE_RELEASE_AFTER=
+PM2_PROCESS_COUNT=
+PM2_STATUS=
+APPLICATION_HEALTH=
+STABILITY=
+PM2_SAVE=
+CURRENT_AND_RUNNING_RELEASE_MATCH_AFTER=
+TARGETED_POST_DEPLOY_TESTS=
+SETTINGS_BRANDS_UI=
+NO_ACTIVE_BRAND_FOR_FUNCTIONAL_TEST=
+ACTIVE_BRAND_DROPDOWN=
+INACTIVE_BRAND_HIDDEN=
+EXCEL_REQUIRES_BRAND=
+BACKEND_REJECTS_MISSING_BRAND=
+BACKEND_REJECTS_INVALID_BRAND=
+BACKEND_REJECTS_INACTIVE_BRAND=
+CENTRAL_BRAND_ID_USED=
+EXCEL_PREVIEW=
+EXCEL_PREVIEW_ROWS=
+EXCEL_IMPORT_FUNCTIONAL=
+EXCEL_BATCH_BRAND_PERSISTED=
+NEW_LEAD_BRAND_INTEREST_PERSISTED=
+DUPLICATE_LEAD_MUTATED=
+COMPETITIVE_QUEUE_REGRESSION=
+AUTOMOTIVE_LEGACY_COMPAT=
+RAW_SQL_EXPOSURE=
+UNRELATED_FILES_CHANGED=NONE
+SECRETS_EXPOSED=NO
