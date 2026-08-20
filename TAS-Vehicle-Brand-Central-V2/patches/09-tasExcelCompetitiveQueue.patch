@@ -1,0 +1,74 @@
+diff --git a/server/services/tasExcelCompetitiveQueue.ts b/server/services/tasExcelCompetitiveQueue.ts
+index f111082..a5da2f5 100644
+--- a/server/services/tasExcelCompetitiveQueue.ts
++++ b/server/services/tasExcelCompetitiveQueue.ts
+@@ -4,6 +4,8 @@ import {
+   getDb,
+   normalizePhone,
+ } from "../db";
++import { assertTASExcelVehicleBrandSelection } from "./tasVehicleBrandContract";
++import { requireActiveTASVehicleBrand } from "./tasVehicleBrands";
+ 
+ type AnyRow = Record<string, any>;
+ type Tx = any;
+@@ -35,6 +37,7 @@ export type TASExcelImportInput = {
+   actorUserName?: string | null;
+   actorRole: string;
+   sourceFileName?: string | null;
++  brandId?: number | null;
+ };
+ 
+ const CONFIGURATOR_ROLES = new Set([
+@@ -756,6 +759,8 @@ export async function importTASExcelLeads(input: TASExcelImportInput) {
+     input.assignmentMode,
+     input.selectedAgentIds,
+   );
++  assertTASExcelVehicleBrandSelection(input.sourceFileName, input.brandId);
++  const selectedBrand = input.brandId ? await requireActiveTASVehicleBrand(Number(input.brandId)) : null;
+   const db = await getDb();
+   if (!db) throw new Error("Database not available");
+   if (!Array.isArray(input.leads) || input.leads.length === 0) {
+@@ -775,11 +780,12 @@ export async function importTASExcelLeads(input: TASExcelImportInput) {
+     );
+     const batchResult = await tx.execute(sql`
+       INSERT INTO tas_excel_import_batches (
+-        sourceFileName, assignmentMode, selectedAgentIds, totalRows,
++        sourceFileName, brandId, assignmentMode, selectedAgentIds, totalRows,
+         importedRows, failedRows, duplicateRows, status,
+         createdByUserId, createdByUserName, createdByUserRole
+       ) VALUES (
+         ${input.sourceFileName ?? null},
++        ${selectedBrand?.id ?? null},
+         ${input.assignmentMode},
+         ${JSON.stringify(selectedAgentIds)},
+         ${input.leads.length},
+@@ -857,6 +863,7 @@ export async function importTASExcelLeads(input: TASExcelImportInput) {
+         importRow: index + 2,
+         importCity: normalized.city,
+         assignmentMode: input.assignmentMode,
++        vehicleBrandId: selectedBrand?.id ?? null,
+       });
+       const customFieldsData = normalized.city
+         ? JSON.stringify({ city: normalized.city, governorate: normalized.city })
+@@ -894,6 +901,21 @@ export async function importTASExcelLeads(input: TASExcelImportInput) {
+       imported += 1;
+       created += 1;
+ 
++      if (selectedBrand?.id) {
++        await tx.execute(sql`
++          INSERT INTO tas_lead_brand_interests (
++            leadId, brandId, importBatchId, source, isPrimary
++          ) VALUES (
++            ${leadId}, ${Number(selectedBrand.id)}, ${importBatchId}, 'excel_import', 1
++          )
++          ON DUPLICATE KEY UPDATE
++            importBatchId = VALUES(importBatchId),
++            source = VALUES(source),
++            isPrimary = VALUES(isPrimary),
++            updatedAt = NOW()
++        `);
++      }
++
+       if (input.assignmentMode === "direct") {
+         const assignment = await assignTASLeadOwnerTx(tx, {
+           leadId,
