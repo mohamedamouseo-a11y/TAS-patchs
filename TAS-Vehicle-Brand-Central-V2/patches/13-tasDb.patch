@@ -1,0 +1,58 @@
+diff --git a/server/tasDb.ts b/server/tasDb.ts
+index 3e9b11f..be8e660 100644
+--- a/server/tasDb.ts
++++ b/server/tasDb.ts
+@@ -1,4 +1,5 @@
+ import { sql } from "drizzle-orm";
++import { requireActiveTASVehicleBrand } from "./services/tasVehicleBrands";
+ import {
+   calculateTASFinanceQuote,
+   createTASFinanceProgram as createFinanceProgramRow,
+@@ -98,27 +99,34 @@ const defaultBranches = [
+   { id: 3, name: "TAS Alexandria Branch", city: "Alexandria", address: "Smouha", phone: "01000000003", workingHours: "10:00 - 20:00", capacityPerSlot: 2, slotIntervalMinutes: 30, workdayStartHour: 10, workdayEndHour: 20, isActive: 1 },
+ ];
+ 
+-export const getTASVehicles = async (filters?: { brand?: string; model?: string; activeOnly?: boolean }) => {
++export const getTASVehicles = async (filters?: { brandId?: number; brand?: string; model?: string; activeOnly?: boolean }) => {
+   const rows = (await listTASVehicles()).map(mapVehicle);
+   return rows.filter((row: AnyRow) => {
++    if (filters?.brandId && Number(row.brandId) !== Number(filters.brandId)) return false;
+     if (filters?.brand && String(row.brand).toLowerCase() !== filters.brand.toLowerCase()) return false;
+     if (filters?.model && String(row.model).toLowerCase() !== filters.model.toLowerCase()) return false;
+     return true;
+   });
+ };
+ 
+-export const createTASVehicle = async (input: AnyRow) => createVehicleRow({
+-  brand: input.brand,
+-  model: input.model,
+-  year: input.modelYear ?? input.year ?? null,
+-  price: input.cashPrice ?? input.price ?? 0,
+-  colors: input.colors ?? [],
+-  specifications: Array.isArray(input.specifications)
+-    ? input.specifications
+-    : [{ key: "Summary", value: typeof input.specs === "string" ? input.specs : input.specs?.summary ?? input.trim ?? "" }].filter((item) => item.value),
+-  branchAvailability: input.branchAvailability ?? defaultBranches.map((branch) => branch.city),
+-  faq: input.faq ?? [],
+-});
++export const createTASVehicle = async (input: AnyRow) => {
++  const centralBrand = input.brandId ? await requireActiveTASVehicleBrand(Number(input.brandId)) : null;
++  const brand = centralBrand?.nameEn ?? String(input.brand ?? "").trim();
++  if (!brand) throw new Error("Vehicle brand is required");
++  return createVehicleRow({
++    brandId: centralBrand?.id ?? null,
++    brand,
++    model: input.model,
++    year: input.modelYear ?? input.year ?? null,
++    price: input.cashPrice ?? input.price ?? 0,
++    colors: input.colors ?? [],
++    specifications: Array.isArray(input.specifications)
++      ? input.specifications
++      : [{ key: "Summary", value: typeof input.specs === "string" ? input.specs : input.specs?.summary ?? input.trim ?? "" }].filter((item) => item.value),
++    branchAvailability: input.branchAvailability ?? defaultBranches.map((branch) => branch.city),
++    faq: input.faq ?? [],
++  });
++};
+ 
+ export const getTASFinancePrograms = async (vehicleId?: number) => (await listTASFinancePrograms(vehicleId ?? null)).map(mapFinanceProgram);
+ 
