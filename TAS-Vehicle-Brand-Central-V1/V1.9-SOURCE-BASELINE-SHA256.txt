@@ -1,0 +1,33 @@
+TAS Vehicle Brand Central V1.9 — Source-derived baseline
+
+Snapshot bundle SHA256:
+7b2855e905ee1e43bd8efc5f8ef9b7ab3d02e45f26742c1be7ad6d69ea8053b9
+
+Observed active release:
+/var/www/TAS-root/releases/20260819_163705_TAS-Excel-Import-Fix-V1.atomic.patch_
+
+These hashes were calculated from the sanitized active-source snapshot collected from that live release. Before reusing the frozen application patch or applying schema changes, compare the corresponding files in the currently active release. Any mismatch means the source base has changed: STOP and collect a new sanitized source snapshot. Do not patch a different base by assumption.
+
+f7e019513a972406aee4ba4a93ee21444f0d492ad2dae3a3341fe1012ed01d0c  package.json
+9823adb8db821a843756860dcab3eb7a2b35a731914fb3650bcc8f24d13b5865  tsconfig.json
+05f9f58a544eedeca8e4f7d4b26de1ae82400c11a5fad0a70c9a014c3fc71e7d  drizzle/schema.ts
+540ddb29441381a34e8f58e7fe2303683a6f257ea15c2cce8afdd4282a5c7139  scripts/deploy-active-release.sh
+c1f56b15a8988bd75de41289a823a346b7cc966d0327080e8d9713d2b9527eca  client/src/pages/AdminSettings.tsx
+597531c7ed2762b02d7f6ba8b189b1967e4f5af79cc3b686030fc021c7becb88  client/src/pages/ImportLeads.tsx
+83319fd6853e294775e3d5dd93bf5a75d34be0695f3ce39baac4b4b755b2c20d  server/automotiveCatalogCompat.ts
+75fe1694f5a32e90396f05e4d2c68cc4f14a48f46107bf73e8381b02ec27781d  server/routers.ts
+d2c0f3345949247dd389724a55467c1553db0f721353c34527cc0699c8e90608  server/services/tasExcelCompetitiveQueue.ts
+1246a6e0b14685ad0c43508bf9479a41c47f7c05f3c70dcc2b8dabcceaebf39f  server/services/tasExcelCompetitiveQueueSafe.ts
+da8b640679baac81a4f39854932caccbb9a0b70cd12bc5141792802213f73184  server/services/tasExcelImportErrorBoundary.ts
+86e3ae5574b0483271e9ff84879858417a70730a531f17dc97d4b340d435e1c6  server/services/tasExcelImportErrorBoundary.test.ts
+
+Runtime facts verified by snapshot:
+- package type: module
+- Node: v24.19.0
+- mysql2 declared and resolves from active release: YES
+- tsx declared and resolves from active release: YES
+- TypeScript declared and resolves from active release: YES
+- mysql2/tsx/TypeScript resolve from staging kit: NO
+
+Source-derived execution rule:
+Schema tools must run with Node and resolve mysql2 from TAS_RUNTIME_ROOT (the exact active release). Do not run the schema tools through pnpm exec tsx from the standalone patch-kit directory and do not install dependencies into the patch kit.
