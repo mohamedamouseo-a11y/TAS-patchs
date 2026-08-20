@@ -1,0 +1,96 @@
+diff --git a/server/routes/developerHub.ts b/server/routes/developerHub.ts
+--- a/server/routes/developerHub.ts
++++ b/server/routes/developerHub.ts
+@@ -30,8 +30,6 @@ import {
+   type GitChangeEntry,
+ } from "../services/developerHubGitHubSecurity";
+ import {
+-  DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN,
+-  DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS,
+   getUnsafeSourceLinkReason,
+   isAtomicDeploymentArtifactPath,
+   isExcludedDeveloperHubRuntimePath,
+@@ -1943,12 +1941,16 @@ async function createGitMutationSnapshot(env: NodeJS.ProcessEnv): Promise<GitMut
+   const statusRaw = await runGit(["status", "--porcelain=v1", "-z", "--untracked-files=all"], env)
+     .then(({ stdout }) => stdout);
+   const untrackedEntries = parseGitStatusPorcelainZ(statusRaw).filter((entry) => entry.status === "??");
++  const reviewedSourceFiles = ATOMIC_WORKSPACE_ISOLATION
++    ? new Set((await collectGitHubSourceAllowlist(requireDeveloperHubWorkTreeRoot())).files)
++    : null;
+   const untracked: Array<{ path: string; mode: number }> = [];
+   let copiedBytes = 0;
+   for (const entry of untrackedEntries) {
+     const source = path.resolve(WORK_TREE_DIR, entry.path);
+     if (!source.startsWith(`${path.resolve(WORK_TREE_DIR)}${path.sep}`)) throw new Error("Unsafe untracked file path.");
+-    if (isExcludedDeveloperHubRuntimePath(entry.path)) continue;
++    const normalizedEntryPath = entry.path.replace(/\\/g, "/");
++    if (reviewedSourceFiles && !reviewedSourceFiles.has(normalizedEntryPath)) continue;
+     const stat = await fs.lstat(source);
+     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Cannot snapshot unsafe untracked path: ${entry.path}`);
+     copiedBytes += stat.size;
+@@ -1969,7 +1971,9 @@ async function createGitMutationSnapshot(env: NodeJS.ProcessEnv): Promise<GitMut
+     async restore() {
+       await runGit(["merge", "--abort"], env).catch(() => undefined);
+       await runGit(["reset", "--hard", head], env);
+-      await runGit(["clean", "-fd", "-e", DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN, "--", "."], env);
++      if (!ATOMIC_WORKSPACE_ISOLATION) {
++        await runGit(["clean", "-fd", "--", "."], env);
++      }
+       if (patchPath) await runGit(["apply", "--binary", "--whitespace=nowarn", patchPath], env);
+       for (const item of untracked) {
+         const source = path.join(untrackedDir, item.path);
+@@ -2023,9 +2027,11 @@ async function commitWorkingChanges(
+ ) {
+   if (!/^[a-f0-9]{40,64}$/i.test(expectedTree)) throw new Error("Invalid reviewed project tree.");
+   const identityEnv = withDeveloperHubGitIdentity(env);
+-  await runGit([
+-    "add", "-A", "--", ".", ...DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS,
+-  ], identityEnv);
++  if (ATOMIC_WORKSPACE_ISOLATION) {
++    await runGit(["read-tree", expectedTree], identityEnv);
++  } else {
++    await runGit(["add", "-A", "--", "."], identityEnv);
++  }
+   await runGit(["diff", "--cached", "--check"], identityEnv);
+   const stagedTree = await runGit(["write-tree"], identityEnv).then(({ stdout }) => stdout.trim());
+   if (stagedTree !== expectedTree) {
+diff --git a/server/services/developerHubSourceExportSafety.test.ts b/server/services/developerHubSourceExportSafety.test.ts
+--- a/server/services/developerHubSourceExportSafety.test.ts
++++ b/server/services/developerHubSourceExportSafety.test.ts
+@@ -2,8 +2,6 @@ import fs from "node:fs";
+ import path from "node:path";
+ import { describe, expect, it } from "vitest";
+ import {
+-  DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN,
+-  DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS,
+   getUnsafeSourceLinkReason,
+   isAtomicDeploymentArtifactPath,
+   isExcludedDeveloperHubRuntimePath,
+@@ -54,15 +52,18 @@ describe("Developer Hub root backups exclusion safety", () => {
+     expect(isExcludedDeveloperHubRuntimePath("backups//file")).toBe(false);
+   });
+ 
+-  it("uses anchored Git path exclusions for commit and rollback mutation paths", () => {
+-    expect(DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS).toEqual([
+-      ":(top,exclude)backups",
+-    ]);
+-    expect(DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN).toBe("/backups");
+-    expect(routeSource).toContain("if (isExcludedDeveloperHubRuntimePath(entry.path)) continue;");
+-    expect(routeSource).toContain("if (isExcludedDeveloperHubRuntimePath(normalized)) return true;");
+-    expect(routeSource).toContain("...DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS");
+-    expect(routeSource).toContain("DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN");
++  it("syncs atomic mutation handling to the reviewed source allowlist", () => {
++    expect(routeSource).toContain(
++      "new Set((await collectGitHubSourceAllowlist(requireDeveloperHubWorkTreeRoot())).files)",
++    );
++    expect(routeSource).toContain(
++      "if (reviewedSourceFiles && !reviewedSourceFiles.has(normalizedEntryPath)) continue;",
++    );
++    expect(routeSource).toContain('await runGit(["read-tree", expectedTree], identityEnv);');
++    expect(routeSource).toContain("if (!ATOMIC_WORKSPACE_ISOLATION) {");
++    expect(routeSource).toContain('await runGit(["clean", "-fd", "--", "."], env);');
++    expect(routeSource).not.toContain("DEVELOPER_HUB_GIT_MUTATION_EXCLUDE_PATHSPECS");
++    expect(routeSource).not.toContain("DEVELOPER_HUB_GIT_CLEAN_EXCLUDE_PATTERN");
+   });
+ 
+   it("keeps generic unsafe-untracked and traversal protections in place", () => {
