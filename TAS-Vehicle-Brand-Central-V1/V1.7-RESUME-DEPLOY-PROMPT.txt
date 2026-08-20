@@ -1,0 +1,136 @@
+Resume TAS Vehicle Brand Central V1 from the V1.7 schema-tooling fix.
+
+Repository: mohamedamouseo-a11y/TAS-patchs
+Branch: patch/tas-vehicle-brand-central-v1
+Patch kit: TAS-Vehicle-Brand-Central-V1
+Production root: /var/www/TAS-root
+Expected database: tas_crm
+
+IMPORTANT VERIFIED STATE
+- The application atomic patch is already frozen and previously passed patch-path validation, fuzz=0 dry-run, 64 test files / 405 tests, TypeScript 915/915 with zero new diagnostics, and production build.
+- Application atomic patch SHA256: 6a11a031ae5e9df505bd258a486db1355929dabe26d6d686e9508c4af812f717
+- V1.7 changes only schema-preparation / schema-verification tooling; it does not modify the 9 application patch paths.
+- Do not rebuild the application atomic patch if its SHA matches.
+
+FAIL CLOSED. Do not modify TAS main/master, grant new DB privileges, change Node/NVM, expose DATABASE_URL, manually restart PM2, manually switch current, or perform destructive DB operations.
+
+1. Refresh source
+Run:
+  git fetch --prune origin patch/tas-vehicle-brand-central-v1
+Use the authoritative remote branch, not a stale local checkout.
+Verify these files exist in the refreshed kit:
+  scripts/prepare-tas-vehicle-brand-central-v1-schema.ts
+  scripts/verify-tas-vehicle-brand-central-v1-schema.ts
+  V1.7-SCHEMA-CJS-COMPAT-FIX.txt
+  V1.7-RESUME-DEPLOY-PROMPT.txt
+
+2. Verify V1.7 tooling
+Both schema scripts must avoid top-level await and use an async main() with an explicit catch handler.
+The prepare script must retain session-only:
+  SET SESSION lock_wait_timeout = 5
+  SET SESSION innodb_lock_wait_timeout = 5
+No global MySQL variables may be changed.
+
+3. Verify frozen application patch
+File:
+  /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1.atomic.patch
+Require SHA256 exactly:
+  6a11a031ae5e9df505bd258a486db1355929dabe26d6d686e9508c4af812f717
+If missing or different: STOP. Do not silently rebuild.
+
+4. Production health recheck
+Require exactly one TAS PM2 process online, HTTP port 3600 = 200, safe Excel import present, and resolved /current equals resolved TAS process cwd. If production state changed: STOP.
+
+5. Database identity
+Read DATABASE_URL securely without printing it. Derive database name only and require tas_crm.
+Do not require PROCESS privilege. Do not grant PROCESS.
+
+6. Schema preparation
+Run only the refreshed V1.7 script:
+  TAS_EXPECTED_DATABASE_NAME=tas_crm pnpm exec tsx /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/scripts/prepare-tas-vehicle-brand-central-v1-schema.ts
+Allowed schema changes only:
+- CREATE TABLE IF NOT EXISTS tas_vehicle_brands
+- nullable tas_excel_import_batches.brandId + intended index
+- nullable automotive_vehicles.brandId + intended index
+- CREATE TABLE IF NOT EXISTS tas_lead_vehicle_interests + intended indexes
+No FK, no backfill, no DML business-row updates, no DROP/DELETE/TRUNCATE.
+Require:
+  TAS_VEHICLE_BRAND_SCHEMA_PREP=PASS
+  DATABASE_NAME=tas_crm
+  DDL_LOCK_TIMEOUT_SECONDS=5
+  DESTRUCTIVE_OPERATIONS=NONE
+If metadata-lock or lock-wait timeout occurs: STOP; do not retry automatically or increase timeout.
+
+7. Read-only schema verify
+Run only the refreshed V1.7 verifier:
+  TAS_EXPECTED_DATABASE_NAME=tas_crm pnpm exec tsx /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/scripts/verify-tas-vehicle-brand-central-v1-schema.ts
+Require:
+  TAS_VEHICLE_BRAND_SCHEMA_VERIFY=PASS
+  DATABASE_NAME=tas_crm
+  VERIFY_MODE=READ_ONLY
+If fail: STOP.
+
+8. Official atomic deploy only
+Before deploy re-verify application patch SHA256 exactly matches the frozen SHA above.
+Unset inherited deploy overrides:
+  unset TYPECHECK_NODE_OPTIONS TEST_NODE_OPTIONS BUILD_NODE_OPTIONS NODE_OPTIONS DEPLOY_TYPECHECK_BASELINE_BOOTSTRAP DEPLOY_INFRA_UPGRADE_PATCH_SHA256
+Deploy only with:
+  APP_DEPLOY_ROOT=/var/www/TAS-root \
+  PM2_APP_NAME=TAS \
+  DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6 \
+  bash /var/www/TAS-root/current/scripts/deploy-active-release.sh \
+  /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1.atomic.patch
+No manual promotion, PM2 restart, or symlink switch.
+
+9. Post-deploy gates
+Require candidate promoted, one TAS PM2 process online, HTTP 3600=200, stability pass, PM2 save pass, and resolved current == resolved process cwd.
+Run promoted targeted tests:
+  pnpm vitest run server/services/tasVehicleBrandContract.test.ts server/services/tasExcelImportErrorBoundary.test.ts
+Require 8/8 PASS.
+
+10. Functional validation
+Verify Settings > Vehicle Brands renders English Name, Arabic Name, Code, Aliases, Active/Inactive, Sort Order.
+Do not create fake production brands. If no real active brand exists, report NO_ACTIVE_BRAND_FOR_FUNCTIONAL_TEST=YES.
+With a real active brand verify active dropdown, inactive hidden for new imports, missing/invalid/inactive brand rejected, and central brandId used.
+If original System.xlsx and valid authenticated access are available, preview it (historical expected 32 rows) and perform a real import using a real active brand and valid sales-agent selection. Only then claim live Excel import PASS. Verify batch brand persistence, new-lead brand interest persistence, duplicates not mutated, competitive queue regression absent, and raw SQL not exposed.
+Verify Automotive legacy compatibility: legacy brand text rows with NULL brandId remain valid; central-brand writes persist brandId and mirror canonical English name to legacy brand.
+
+FINAL REPORT
+REMOTE_HEAD=
+V17_SCHEMA_TOOLING_PRESENT=
+APPLICATION_PATCH_SHA256=
+APPLICATION_PATCH_REBUILT=NO
+PRODUCTION_HEALTH_BEFORE=
+DERIVED_DATABASE_NAME=
+SCHEMA_PREP=
+SCHEMA_VERIFY=
+DESTRUCTIVE_DB_OPERATIONS=NONE
+EXISTING_BUSINESS_ROWS_MUTATED_BY_SCHEMA_PREP=NO
+ATOMIC_DEPLOY=
+CANDIDATE_PROMOTED=
+ACTIVE_RELEASE=
+PM2_PROCESS_COUNT=
+PM2_STATUS=
+APPLICATION_HEALTH=
+CURRENT_AND_RUNNING_RELEASE_MATCH_AFTER=
+TARGETED_POST_DEPLOY_TESTS=
+SETTINGS_BRANDS_UI=
+NO_ACTIVE_BRAND_FOR_FUNCTIONAL_TEST=
+ACTIVE_BRAND_DROPDOWN=
+INACTIVE_BRAND_HIDDEN=
+EXCEL_REQUIRES_BRAND=
+BACKEND_REJECTS_MISSING_BRAND=
+BACKEND_REJECTS_INVALID_BRAND=
+BACKEND_REJECTS_INACTIVE_BRAND=
+CENTRAL_BRAND_ID_USED=
+EXCEL_PREVIEW=
+EXCEL_PREVIEW_ROWS=
+EXCEL_IMPORT_FUNCTIONAL=
+EXCEL_BATCH_BRAND_PERSISTED=
+NEW_LEAD_BRAND_INTEREST_PERSISTED=
+DUPLICATE_LEAD_MUTATED=
+COMPETITIVE_QUEUE_REGRESSION=
+AUTOMOTIVE_LEGACY_COMPAT=
+RAW_SQL_EXPOSURE=
+UNRELATED_FILES_CHANGED=NONE
+SECRETS_EXPOSED=NO
