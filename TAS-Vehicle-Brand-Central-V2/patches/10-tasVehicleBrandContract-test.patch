@@ -1,0 +1,40 @@
+diff --git a/server/services/tasVehicleBrandContract.test.ts b/server/services/tasVehicleBrandContract.test.ts
+new file mode 100644
+index 0000000..d5b6abe
+--- /dev/null
++++ b/server/services/tasVehicleBrandContract.test.ts
+@@ -0,0 +1,34 @@
++import { describe, expect, it } from "vitest";
++import {
++  assertTASExcelVehicleBrandSelection,
++  normalizeVehicleBrandAliases,
++  normalizeVehicleBrandCode,
++  normalizeVehicleBrandPayload,
++} from "./tasVehicleBrandContract";
++
++describe("TAS central vehicle brand contract", () => {
++  it("normalizes stable brand codes", () => {
++    expect(normalizeVehicleBrandCode(" Mercedes Benz ")).toBe("MERCEDES_BENZ");
++  });
++
++  it("deduplicates aliases without losing display text", () => {
++    expect(normalizeVehicleBrandAliases(["Mercedes", " mercedes ", "مرسيدس"])).toEqual(["Mercedes", "مرسيدس"]);
++  });
++
++  it("rejects an empty brand code", () => {
++    expect(() => normalizeVehicleBrandCode("---")).toThrow("Vehicle brand code is required");
++  });
++
++  it("requires the canonical English name", () => {
++    expect(() => normalizeVehicleBrandPayload({ code: "BMW", nameEn: "" })).toThrow("Vehicle brand English name is required");
++  });
++
++  it("requires a brand for file-based Excel imports", () => {
++    expect(() => assertTASExcelVehicleBrandSelection("System.xlsx", null)).toThrow("Vehicle brand is required for Excel import");
++  });
++
++  it("keeps non-file legacy calls backward compatible and accepts valid file imports", () => {
++    expect(() => assertTASExcelVehicleBrandSelection(null, null)).not.toThrow();
++    expect(() => assertTASExcelVehicleBrandSelection("System.xlsx", 7)).not.toThrow();
++  });
++});
