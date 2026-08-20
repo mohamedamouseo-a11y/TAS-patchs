@@ -1,0 +1,239 @@
+Implement and deploy TAS Vehicle Brand Central V1 using the attached patch kit with strict production gates.
+
+GOAL
+Create one central Vehicle Brand master in TAS that is managed from Admin Settings and is reused by Excel Import and Automotive Catalog. New Excel file imports must select an active central brand before starting.
+
+CURRENT EXPECTED PRODUCTION STATE
+APP_DEPLOY_ROOT=/var/www/TAS-root
+PM2_APP_NAME=TAS
+DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6
+CURRENT_ACTIVE=/var/www/TAS-root/releases/20260819_163705_TAS-Excel-Import-Fix-V1.atomic.patch_
+CURRENT=/var/www/TAS-root/current
+PORT=3600
+EXPECTED_DATABASE=tas_crm
+
+CRITICAL SAFETY RULES
+- TAS only.
+- Do NOT modify or push to mohamedamouseo-a11y/TAS master.
+- Do NOT regenerate or remove Excel V1 safe-boundary files.
+- server/routers.ts MUST continue importing tasExcelCompetitiveQueueSafe.
+- Do NOT modify drizzle/schema.ts.
+- Do NOT DROP, DELETE, TRUNCATE, reset, recreate existing tables, rename existing columns, or run destructive migrations.
+- Do NOT manually switch /current.
+- Do NOT manually promote a release.
+- Do NOT bypass tests/typecheck/build/schema/integrity gates.
+- Do NOT weaken or skip existing tests.
+- Do NOT expose DATABASE_URL, credentials, tokens, cookies, customer rows, or raw SQL in browser-visible errors.
+- If any expected anchor/path/hash/state differs, STOP instead of improvising.
+
+FEATURE CONTRACT
+1. Settings > Vehicle Brands is Admin-only for create/update; authenticated users may read active brands where needed.
+2. Brand master fields: stable code, English name, Arabic name, aliases, active/inactive, sort order.
+3. Inactive brand stays historically stored but does not appear in new Excel selection.
+4. File-based Excel Import requires brandId server-side as well as in UI.
+5. Excel batch stores brandId.
+6. Newly created Excel leads get tas_lead_vehicle_interests relation to the selected brand and import batch.
+7. Duplicate skipped leads MUST NOT be silently changed by the import.
+8. Automotive Catalog supports central brandId and mirrors the canonical English name into legacy brand text for compatibility.
+9. Existing catalog rows and historical imports remain valid with NULL brandId.
+10. No automatic destructive/backfill migration in V1.
+
+PHASE 1 — PRECHECK
+Confirm readlink -f /var/www/TAS-root/current equals CURRENT_ACTIVE above.
+Confirm exactly one TAS PM2 process, online, raw cwd=/var/www/TAS-root/current, raw script=/var/www/TAS-root/current/dist/index.js, HTTP :3600=200.
+Confirm /var/www/TAS-root/current/server/routers.ts contains:
+from "./services/tasExcelCompetitiveQueueSafe"
+If any check differs: STOP.
+
+PHASE 2 — STAGE KIT, NEVER EDIT CURRENT
+Unpack this kit under:
+/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit
+Create an isolated source copy of CURRENT outside /releases and outside /current, for example:
+/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/source-current
+Do not modify /var/www/TAS-root/current.
+
+Build the Git-style atomic patch FROM THE EXACT ACTIVE SOURCE COPY:
+node /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/scripts/build-tas-vehicle-brand-central-v1-atomic.mjs \
+  --source /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/source-current \
+  --output /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1.atomic.patch
+
+Expected builder output:
+TAS_VEHICLE_BRAND_PATCH_BUILD=PASS
+PATCH_DRY_RUN=PASS
+SAFE_EXCEL_IMPORT_PRESERVED=YES
+
+Freeze and report SHA256. Do NOT rebuild after freezing.
+
+PHASE 3 — TRUSTED PATCH PATH VALIDATION
+Run trusted release-tree-integrity.py patch-paths against the generated patch.
+Expected EXACT paths, no more/no less:
+client/src/components/settings/VehicleBrandsSettings.tsx
+client/src/pages/AdminSettings.tsx
+client/src/pages/ImportLeads.tsx
+server/automotiveCatalogCompat.ts
+server/routers.ts
+server/services/tasExcelCompetitiveQueue.ts
+server/services/tasVehicleBrandContract.test.ts
+server/services/tasVehicleBrandContract.ts
+server/services/tasVehicleBrands.ts
+
+Then run a fresh patch --batch --forward --fuzz=0 --strip=1 dry-run against another clean copy of CURRENT.
+If any fuzz, offset, rejection, or additional path: STOP.
+
+PHASE 4 — ISOLATED APP VALIDATION BEFORE ANY DB WRITE
+Apply the frozen atomic patch to an isolated copy only.
+Install dependencies with the same production-safe frozen/offline method used by TAS.
+Verify server/routers.ts STILL imports tasExcelCompetitiveQueueSafe.
+Run targeted test:
+pnpm vitest run server/services/tasVehicleBrandContract.test.ts
+Expected: 1 file PASS, 6/6 tests PASS.
+
+Run the existing Excel error boundary regression test:
+pnpm vitest run server/services/tasExcelImportErrorBoundary.test.ts
+Expected: 2/2 PASS.
+
+Run full suite:
+pnpm test
+Expected: 0 failed files / 0 failed tests.
+Current production baseline before this patch is 63 files / 399 tests. This patch adds one 6-test file, so the expected count is normally 64 files / 405 tests if no environment-specific discovery changes occur. Any failure is a STOP.
+
+Run TypeScript gate against approved baseline:
+baseline diagnostics=915
+candidate diagnostics MUST be <=915.
+No new diagnostic is allowed.
+
+Verify source schema manifest is unchanged because drizzle/schema.ts is untouched.
+Run production build. Expected BUILD=PASS.
+If any gate fails: STOP. Do not touch production DB.
+
+PHASE 5 — SAFE DB ENV PRECHECK
+Read DATABASE_URL from the running TAS environment without printing it.
+Derive only the database name.
+Expected: tas_crm
+Set TAS_EXPECTED_DATABASE_NAME=tas_crm.
+If derived name differs: STOP.
+
+Before DDL, verify no long-running/blocked transaction makes DDL unsafe. Use read-only process/transaction metadata. If material lock risk exists: STOP.
+
+PHASE 6 — ADDITIVE SCHEMA PREP
+Run exactly the staged schema prep script, never a copied/modified variant:
+TAS_EXPECTED_DATABASE_NAME=tas_crm \
+pnpm exec tsx /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/scripts/prepare-tas-vehicle-brand-central-v1-schema.ts
+
+Expected:
+TAS_VEHICLE_BRAND_SCHEMA_PREP=PASS
+DATABASE_NAME=tas_crm
+DESTRUCTIVE_OPERATIONS=NONE
+
+This script may ONLY:
+- CREATE TABLE IF NOT EXISTS tas_vehicle_brands
+- ADD nullable tas_excel_import_batches.brandId if missing
+- ADD nullable automotive_vehicles.brandId if missing
+- CREATE TABLE IF NOT EXISTS tas_lead_vehicle_interests
+- add the documented indexes
+It must not mutate existing business rows.
+
+Then run read-only verifier:
+TAS_EXPECTED_DATABASE_NAME=tas_crm \
+pnpm exec tsx /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/kit/scripts/verify-tas-vehicle-brand-central-v1-schema.ts
+Expected:
+TAS_VEHICLE_BRAND_SCHEMA_VERIFY=PASS
+VERIFY_MODE=READ_ONLY
+
+If schema verification fails: STOP before app deploy.
+
+PHASE 7 — OFFICIAL ATOMIC APP DEPLOY
+Unset inherited deployment overrides:
+unset TYPECHECK_NODE_OPTIONS TEST_NODE_OPTIONS BUILD_NODE_OPTIONS NODE_OPTIONS DEPLOY_TYPECHECK_BASELINE_BOOTSTRAP DEPLOY_INFRA_UPGRADE_PATCH_SHA256
+
+Run ONLY the official normal one-patch deployment:
+APP_DEPLOY_ROOT=/var/www/TAS-root \
+PM2_APP_NAME=TAS \
+DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6 \
+bash /var/www/TAS-root/current/scripts/deploy-active-release.sh \
+  /var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1.atomic.patch
+
+Do NOT use --prepared-candidate.
+Do NOT manually create/promote candidate.
+Let official rollback handle a failed promotion.
+
+PHASE 8 — POST-DEPLOY HEALTH
+Require:
+CANDIDATE_PROMOTED=YES
+exactly one TAS process
+PM2 status online
+raw cwd=/var/www/TAS-root/current
+raw script=/var/www/TAS-root/current/dist/index.js
+HTTP 3600=200
+no restart loop
+stability PASS
+pm2 save PASS
+
+Run after promotion:
+pnpm vitest run server/services/tasVehicleBrandContract.test.ts server/services/tasExcelImportErrorBoundary.test.ts
+Expected 8/8 total targeted tests PASS.
+
+PHASE 9 — FUNCTIONAL VALIDATION, NO FAKE PRODUCTION MASTER DATA
+Open Admin Settings as Admin/Super Admin.
+Verify Vehicle Brands tab renders.
+Do NOT invent a fake production brand just to pass validation.
+If a real brand is already configured, use it.
+If no active brand exists, report NO_ACTIVE_BRAND_FOR_FUNCTIONAL_TEST and leave functional Excel import pending until an authorized real brand is added through Settings.
+
+When a real active brand exists, verify:
+- it appears in Excel Import dropdown;
+- an inactive brand does not appear there;
+- Excel Start Import cannot proceed with no brand;
+- selecting a brand + System.xlsx preview still works;
+- starting import persists tas_excel_import_batches.brandId;
+- newly created imported lead has tas_lead_vehicle_interests for that brand/import batch;
+- duplicate skipped lead is not silently updated;
+- Competitive queue behavior remains unchanged;
+- browser never exposes raw SQL/query/params.
+
+Verify Automotive Catalog still lists legacy rows with brand text, and central-brand-created/updated rows use brandId + canonical brand name mirror.
+
+FINAL REPORT
+ACTIVE_BEFORE=
+PATCH_PATH=
+PATCH_SHA256=
+PATCH_PATHS_VALIDATION=
+PATCH_DRY_RUN=
+SAFE_EXCEL_IMPORT_PRESERVED=
+TARGETED_BRAND_TESTS=
+TARGETED_EXCEL_BOUNDARY_TESTS=
+FULL_TEST_STATUS=
+FULL_TEST_COUNTS=
+TYPECHECK_BASELINE=
+TYPECHECK_CANDIDATE=
+SCHEMA_MANIFEST_CHANGED=NO
+BUILD=
+DERIVED_DATABASE_NAME=
+DDL_LOCK_RISK=
+SCHEMA_PREP=
+SCHEMA_VERIFY=
+DESTRUCTIVE_DB_OPERATIONS=NONE
+EXISTING_BUSINESS_ROWS_MUTATED_BY_SCHEMA_PREP=NO
+ATOMIC_DEPLOY=
+CANDIDATE_PROMOTED=
+ACTIVE_RELEASE=
+CURRENT_SYMLINK=
+PM2_PROCESS_COUNT=
+PM2_STATUS=
+PM2_CWD_RAW=
+PM2_SCRIPT_RAW=
+APPLICATION_HEALTH=
+STABILITY=
+PM2_SAVE=
+SETTINGS_BRANDS_UI=
+ACTIVE_BRAND_DROPDOWN=
+INACTIVE_BRAND_HIDDEN=
+EXCEL_REQUIRES_BRAND=
+EXCEL_IMPORT_FUNCTIONAL=
+EXCEL_BATCH_BRAND_PERSISTED=
+NEW_LEAD_BRAND_INTEREST_PERSISTED=
+DUPLICATE_LEAD_MUTATED=NO
+AUTOMOTIVE_LEGACY_COMPAT=
+RAW_SQL_EXPOSURE=NO
+UNRELATED_FILES_CHANGED=NONE
+SECRETS_EXPOSED=NO
