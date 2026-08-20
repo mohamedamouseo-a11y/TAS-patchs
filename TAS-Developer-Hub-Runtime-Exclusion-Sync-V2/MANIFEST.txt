@@ -1,0 +1,49 @@
+TAS Developer Hub Runtime Exclusion Sync V2
+
+Patch repository:
+mohamedamouseo-a11y/TAS-patchs
+
+Patch branch:
+patch/tas-developer-hub-runtime-exclusion-sync-v2
+
+Source repository:
+mohamedamouseo-a11y/TAS
+
+Source branch:
+master
+
+Source HEAD used for construction:
+90346e80e538a11c23c77f2100a32979635c8e3c
+
+Patch file:
+TAS-Developer-Hub-Runtime-Exclusion-Sync-V2.atomic.patch
+
+Exact allowed changed paths:
+1. server/routes/developerHub.ts
+2. server/services/developerHubSourceExportSafety.test.ts
+
+Purpose:
+Synchronize atomic Developer Hub Execute mutation handling with the same reviewed source allowlist used by Review. This prevents approved runtime/excluded paths such as root backups and downloads from becoming rollback-snapshot blockers without broadening unsafe symlink or traversal acceptance.
+
+Contract:
+- In atomic workspace isolation, rollback snapshot copies only untracked files present in the reviewed source allowlist.
+- Excluded runtime artifacts and symlinks are not copied into rollback snapshots.
+- In atomic workspace isolation, commit staging uses the exact reviewed candidate tree via git read-tree rather than git add -A over the runtime worktree.
+- In atomic workspace isolation, rollback does not run broad git clean over the runtime worktree.
+- Non-atomic behavior retains the existing generic git add/git clean path.
+- Existing lexical worktree containment and unsafe regular-file/symlink checks remain for untracked files that are actual reviewed source.
+- No database changes.
+- No drizzle/schema.ts changes.
+- No Vehicle Brand changes.
+- No Google Drive service changes.
+- No package or lockfile changes.
+
+Required validation before deployment:
+- patch path count exactly 2
+- fuzz=0 dry run
+- targeted developerHubSourceExportSafety.test.ts PASS
+- isolated Git candidate-tree/read-tree behavior test PASS
+- verify Review excludes backups and downloads
+- verify Execute no longer fails on backups or downloads
+- verify arbitrary non-reviewed runtime symlinks remain excluded, not silently staged
+- verify unsafe symlink/traversal protections remain for reviewed source paths
