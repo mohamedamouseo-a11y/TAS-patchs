@@ -1,0 +1,60 @@
+TAS Vehicle Brand Central V1.8 — Source Snapshot Collection
+
+Purpose: collect the exact active TAS source and relevant deployment/runtime files so the next correction is built from the real production source instead of assumptions.
+
+READ-ONLY ONLY. Do not deploy, patch, restart PM2, switch current, modify the database, or install packages.
+
+Resolve the active release with:
+readlink -f /var/www/TAS-root/current
+
+Create a sanitized archive containing these files from the ACTIVE RELEASE when present, preserving paths:
+package.json
+pnpm-lock.yaml
+tsconfig.json
+drizzle/schema.ts
+scripts/deploy-active-release.sh
+server/db.ts
+client/src/pages/AdminSettings.tsx
+client/src/pages/ImportLeads.tsx
+client/src/components/settings/VehicleBrandsSettings.tsx
+server/automotiveCatalogCompat.ts
+server/routers.ts
+server/services/tasExcelCompetitiveQueue.ts
+server/services/tasExcelCompetitiveQueueSafe.ts
+server/services/tasExcelImportErrorBoundary.ts
+server/services/tasExcelImportErrorBoundary.test.ts
+server/services/tasVehicleBrandContract.ts
+server/services/tasVehicleBrandContract.test.ts
+server/services/tasVehicleBrands.ts
+
+Also include the current staging kit versions of:
+scripts/build-tas-vehicle-brand-central-v1-atomic.mjs
+scripts/prepare-tas-vehicle-brand-central-v1-schema.ts
+scripts/verify-tas-vehicle-brand-central-v1-schema.ts
+
+Create a text report containing only non-sensitive runtime facts:
+ACTIVE_RELEASE_REALPATH
+PM2_CWD_REALPATH
+PM2_SCRIPT_REALPATH
+CURRENT_AND_RUNNING_RELEASE_MATCH
+HTTP_3600
+NODE_VERSION
+PNPM_VERSION
+PACKAGE_TYPE
+whether mysql2 is declared in package.json
+whether tsx is declared in package.json
+whether typescript is declared in package.json
+whether node_modules exists in active release
+whether mysql2 resolves from active release
+whether mysql2 resolves from staging kit
+whether mysql2 resolves from existing candidate/test-copy
+
+Never include .env files, credentials, tokens, passwords, customer data, database rows, SQL dumps, node_modules, dist, uploads, or private keys.
+
+Output archive:
+/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1-SOURCE-SNAPSHOT.tar.gz
+
+Output report:
+/var/www/TAS-root/.tas-vehicle-brand-central-v1-staging/TAS-Vehicle-Brand-Central-V1-SOURCE-SNAPSHOT-REPORT.txt
+
+Return/upload both files. Do not attempt deployment in this run.
