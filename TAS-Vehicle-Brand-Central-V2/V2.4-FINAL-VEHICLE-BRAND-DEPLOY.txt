@@ -1,0 +1,263 @@
+TAS Vehicle Brand Central V2.4 — FINAL VEHICLE BRAND DEPLOY AFTER BASELINE REAPPROVAL
+
+PURPOSE
+Deploy the already validated Vehicle Brand Central V2 application patch after the official TypeScript baseline reapproval succeeded. Do not modify or rebuild the Vehicle Brand application patch if its frozen SHA still matches.
+
+KNOWN APPROVED STATE
+- Vehicle Brand application patch SHA256: 47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d
+- V2.3 baseline reapproval completed successfully.
+- Approved baseline diagnostic count: 915.
+- Google Drive production enhancement must remain preserved.
+- Vehicle Brand V2 schema objects were already prepared and verified before the prior official deployment was blocked by the stale baseline.
+- Vehicle Brand V2 itself was not deployed during baseline reapproval.
+
+DO NOT use any V1 Vehicle Brand patch/procedure.
+DO NOT rebuild the application patch if the frozen SHA matches.
+DO NOT manually edit production source.
+DO NOT manually switch /current.
+DO NOT manually restart PM2.
+DO NOT refresh/bootstrap the TypeScript baseline in this run.
+DO NOT create fake production brands.
+
+1. PRODUCTION HEALTH AND BASELINE FRESHNESS
+Resolve:
+ACTIVE="$(readlink -f /var/www/TAS-root/current)"
+Require exactly one TAS PM2 process online, resolved process cwd == "$ACTIVE", HTTP 127.0.0.1:3600 = 200.
+
+Read approved baseline cache metadata from:
+/var/www/TAS-root/.atomic-release/trust/v3.6/typecheck-baseline-cache
+
+Use the trusted release-tree verifier to calculate the current ACTIVE source manifest and require it matches the cached source_manifest_sha256 exactly.
+Require approved baseline diagnostic count = 915 using the trusted parser/gate.
+Require baseline_root resolves to ACTIVE.
+Do not modify the baseline cache.
+
+Report:
+BASELINE_FRESH_FOR_ACTIVE=YES
+BASELINE_DIAGNOSTIC_COUNT=915
+
+2. PRESERVE GOOGLE DRIVE ENHANCEMENT
+Calculate SHA256:
+$ACTIVE/server/services/tasGoogleDriveOAuthService.ts
+Require exactly:
+86477826b08c13457760e2352025b070507b3383a23c5f1bd7479bd91ee202b4
+If different: STOP.
+Report GOOGLE_DRIVE_ENHANCEMENT_PRESERVED_BEFORE=YES.
+
+3. VERIFY V2 SOURCE BASE
+Use TAS-Vehicle-Brand-Central-V2/V2.0-MANIFEST.txt.
+Verify every EXISTING_SOURCE_BASE_SHA256 entry against ACTIVE.
+Require these files are still absent before patch:
+- client/src/components/settings/VehicleBrandsSettings.tsx
+- server/services/tasVehicleBrandContract.test.ts
+- server/services/tasVehicleBrandContract.ts
+- server/services/tasVehicleBrands.ts
+If any mismatch or required-new file already exists: STOP.
+Report SOURCE_BASE_MATCH=PASS.
+
+4. VERIFY FROZEN APPLICATION PATCH
+Use the existing frozen patch if present:
+/var/www/TAS-root/.tas-vehicle-brand-v2/TAS-Vehicle-Brand-Central-V2.atomic.patch
+Calculate SHA256 and require exactly:
+47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d
+If missing, assemble from the authoritative V2 patch parts in the exact order defined by V2.0-MANIFEST.txt, then require the same SHA.
+Do not alter any patch part.
+Report APPLICATION_PATCH_REBUILT=NO when the existing frozen patch is reused; if assembly is required only because the frozen file is absent, report APPLICATION_PATCH_REASSEMBLED_FROM_AUTHORITATIVE_PARTS=YES and still require the exact SHA.
+
+5. PATCH PATHS AND DRY RUN
+Trusted patch-path validation must return exactly 13 paths:
+client/src/components/settings/VehicleBrandsSettings.tsx
+client/src/pages/AdminSettings.tsx
+client/src/pages/ImportLeads.tsx
+client/src/pages/automotive/VehicleCatalogPage.tsx
+client/src/pages/tas/TASAdminPage.tsx
+server/automotiveCatalogCompat.ts
+server/db.ts
+server/routers.ts
+server/services/tasExcelCompetitiveQueue.ts
+server/services/tasVehicleBrandContract.test.ts
+server/services/tasVehicleBrandContract.ts
+server/services/tasVehicleBrands.ts
+server/tasDb.ts
+
+Explicitly require:
+- drizzle/schema.ts unchanged
+- server/services/tasExcelCompetitiveQueueSafe.ts unchanged
+- server/services/tasGoogleDriveOAuthService.ts not in patch
+
+Run patch dry-run against a disposable copy of ACTIVE:
+patch --batch --forward --fuzz=0 --strip=1 --directory=<DISPOSABLE_COPY> --dry-run < <FROZEN_V2_PATCH>
+Require fuzz=0, offsets=0, rejects=0.
+
+6. VERIFY EXISTING V2 DATABASE SCHEMA — READ ONLY
+Resolve ACTIVE again.
+Run only the V2.1 read-only verifier:
+TAS_RUNTIME_ROOT="$ACTIVE" \
+TAS_RUNTIME_ENV_FILE="$ACTIVE/.env" \
+TAS_EXPECTED_DATABASE_NAME=tas_crm \
+node /var/www/TAS-root/.tas-vehicle-brand-v2/kit/scripts/verify-tas-vehicle-brand-central-v2-schema.mjs
+
+Require:
+TAS_VEHICLE_BRAND_V2_SCHEMA_VERIFY=PASS
+DATABASE_NAME=tas_crm
+VERIFY_MODE=READ_ONLY
+Required objects:
+- tas_vehicle_brands
+- tas_excel_import_batches.brandId
+- idx_tas_excel_batches_brand
+- tas_vehicles.brandId
+- idx_tas_vehicles_brand_id
+- tas_lead_brand_interests
+
+automotive_vehicles remains OPTIONAL. If absent, accept:
+AUTOMOTIVE_OPTIONAL_INTEGRATION=SKIPPED_TABLE_NOT_PRESENT
+
+If schema verify fails: STOP. Do not run schema prep automatically in this V2.4 run.
+
+7. FINAL HEALTH/FRESHNESS RECHECK
+Immediately before deploy:
+- recalculate frozen V2 patch SHA and require exact match
+- recalculate current ACTIVE manifest and require it still matches approved baseline cache
+- PM2 online
+- HTTP 3600 = 200
+- Google Drive file SHA still exact
+If anything changed: STOP.
+
+8. OFFICIAL ATOMIC DEPLOY ONLY
+Unset any bootstrap or custom memory override variables supplied by previous manual procedures:
+unset DEPLOY_TYPECHECK_BASELINE_BOOTSTRAP
+unset DEPLOY_INFRA_UPGRADE_PATCH_SHA256
+unset TYPECHECK_NODE_OPTIONS
+unset TEST_NODE_OPTIONS
+unset BUILD_NODE_OPTIONS
+unset NODE_OPTIONS
+
+Run ONLY:
+APP_DEPLOY_ROOT=/var/www/TAS-root \
+PM2_APP_NAME=TAS \
+DEPLOY_TRUST_ROOT=/var/www/TAS-root/.atomic-release/trust/v3.6 \
+bash /var/www/TAS-root/current/scripts/deploy-active-release.sh \
+/var/www/TAS-root/.tas-vehicle-brand-v2/TAS-Vehicle-Brand-Central-V2.atomic.patch
+
+Do not manually promote a candidate, change /current, or restart PM2.
+If official deploy fails: STOP and return the exact sanitized first failure. Do not bypass a gate.
+
+9. REQUIRED OFFICIAL DEPLOY GATES
+Require the official deployment itself reports success through:
+- trusted patch-path validation
+- TypeScript baseline comparison against approved 915 baseline
+- foundation tests
+- full application test suite
+- production build
+- integrity checks
+- candidate promotion
+- PM2 restart through official deploy script
+- HTTP health/stability
+- PM2 save
+
+Require:
+ATOMIC_DEPLOY=PASS
+CANDIDATE_PROMOTED=YES
+
+10. POST-DEPLOY HEALTH
+Resolve NEW_ACTIVE="$(readlink -f /var/www/TAS-root/current)".
+Require:
+PM2_PROCESS_COUNT=1
+PM2_STATUS=online
+HTTP_3600=200
+STABILITY=PASS
+PM2_SAVE=PASS
+CURRENT_AND_RUNNING_RELEASE_MATCH_AFTER=YES
+
+11. POST-DEPLOY TARGETED TESTS
+From NEW_ACTIVE run:
+pnpm vitest run \
+server/services/tasVehicleBrandContract.test.ts \
+server/services/tasExcelImportErrorBoundary.test.ts
+Require 8/8 PASS.
+
+12. POST-DEPLOY SCHEMA VERIFY
+Run V2 schema verifier again using NEW_ACTIVE runtime env. Require PASS and READ_ONLY.
+
+13. VERIFY GOOGLE DRIVE ENHANCEMENT STILL PRESERVED
+Calculate NEW_ACTIVE/server/services/tasGoogleDriveOAuthService.ts SHA256.
+Require exact:
+86477826b08c13457760e2352025b070507b3383a23c5f1bd7479bd91ee202b4
+Report GOOGLE_DRIVE_ENHANCEMENT_PRESERVED_AFTER=YES.
+
+14. FUNCTIONAL VEHICLE BRAND VALIDATION
+Verify Settings → Vehicle Brands renders and exposes:
+- Code
+- English Name
+- Arabic Name
+- Aliases
+- Active / Inactive
+- Sort Order
+Do not create a fake brand.
+If no real active brand exists, report NO_ACTIVE_BRAND_FOR_FUNCTIONAL_TEST=YES and do not fake data.
+
+Verify source/runtime behavior:
+- authenticated consumers can read active brands
+- admin/super-admin can manage brands
+- inactive brands are excluded from new selections
+- Excel Import requires central brandId
+- backend rejects missing/invalid/inactive brand for file import
+- duplicate skipped Excel leads are not mutated
+- new imported leads use tas_lead_brand_interests
+- TAS core vehicle catalog uses tas_vehicles.brandId and canonical English brand text
+- historical tas_vehicles rows with brandId NULL remain valid; no backfill
+- automotive_vehicles absence is accepted
+
+15. OPTIONAL REAL EXCEL TEST
+Only if valid authenticated TAS access, original System.xlsx, at least one real active brand, and valid Sales Agents are already available.
+Then preview/import and validate historical expected preview of 32 rows.
+If any prerequisite is unavailable, report the exact NOT_VERIFIED reason and do not invent credentials/data.
+
+FINAL REPORT
+ACTIVE_BEFORE=
+BASELINE_FRESH_FOR_ACTIVE=
+BASELINE_DIAGNOSTIC_COUNT=
+GOOGLE_DRIVE_ENHANCEMENT_PRESERVED_BEFORE=
+SOURCE_BASE_MATCH=
+APPLICATION_PATCH_SHA256=
+APPLICATION_PATCH_REBUILT=
+APPLICATION_PATCH_REASSEMBLED_FROM_AUTHORITATIVE_PARTS=
+PATCH_PATH_COUNT=
+PATCH_PATH_VALIDATION=
+PATCH_DRY_RUN=
+SCHEMA_VERIFY_BEFORE=
+AUTOMOTIVE_OPTIONAL_INTEGRATION=
+ATOMIC_DEPLOY=
+CANDIDATE_PROMOTED=
+ACTIVE_AFTER=
+PM2_PROCESS_COUNT=
+PM2_STATUS=
+HTTP_3600=
+STABILITY=
+PM2_SAVE=
+CURRENT_AND_RUNNING_RELEASE_MATCH_AFTER=
+TARGETED_POST_DEPLOY_TESTS=
+SCHEMA_VERIFY_AFTER=
+GOOGLE_DRIVE_ENHANCEMENT_PRESERVED_AFTER=
+SETTINGS_BRANDS_UI=
+NO_ACTIVE_BRAND_FOR_FUNCTIONAL_TEST=
+ACTIVE_BRAND_DROPDOWN=
+INACTIVE_BRAND_HIDDEN=
+EXCEL_REQUIRES_BRAND=
+BACKEND_REJECTS_MISSING_BRAND=
+BACKEND_REJECTS_INVALID_BRAND=
+BACKEND_REJECTS_INACTIVE_BRAND=
+DUPLICATE_LEAD_MUTATED=NO
+TAS_CATALOG_CENTRAL_BRAND=
+EXCEL_PREVIEW=
+EXCEL_PREVIEW_ROWS=
+EXCEL_IMPORT_FUNCTIONAL=
+EXCEL_BATCH_BRAND_PERSISTED=
+NEW_LEAD_BRAND_INTEREST_PERSISTED=
+COMPETITIVE_QUEUE_REGRESSION=
+RAW_SQL_EXPOSURE=NO
+DRIZZLE_SCHEMA_CHANGED=NO
+EXCEL_SAFE_WRAPPER_CHANGED=NO
+DATABASE_MUTATIONS_DURING_V2_4=NONE
+UNRELATED_FILES_CHANGED=NONE
+SECRETS_EXPOSED=NO
