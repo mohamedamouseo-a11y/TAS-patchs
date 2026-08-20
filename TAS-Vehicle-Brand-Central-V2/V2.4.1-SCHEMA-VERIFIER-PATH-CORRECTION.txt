@@ -1,0 +1,16 @@
+V2.4.1 PATH CORRECTION
+
+Scope: documentation/procedure correction only.
+
+Incorrect verifier path used by V2.4:
+/var/www/TAS-root/.tas-vehicle-brand-v2/kit/scripts/verify-tas-vehicle-brand-central-v2-schema.mjs
+
+Correct verified verifier path:
+/var/www/TAS-root/.tas-vehicle-brand-v2/TAS-Vehicle-Brand-Central-V2/scripts/verify-tas-vehicle-brand-central-v2-schema.mjs
+
+Use the correct path for both pre-deploy and post-deploy read-only schema verification.
+
+All other V2.4 requirements remain unchanged.
+
+Frozen Vehicle Brand application patch remains unchanged with SHA256:
+47f80de36f5ceee42bbf633f3a821a74225782f9ee9ad60aca42398bc675eb8d
