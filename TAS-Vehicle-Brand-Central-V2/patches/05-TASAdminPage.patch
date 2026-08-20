@@ -1,0 +1,39 @@
+diff --git a/client/src/pages/tas/TASAdminPage.tsx b/client/src/pages/tas/TASAdminPage.tsx
+index f711651..3288e2f 100644
+--- a/client/src/pages/tas/TASAdminPage.tsx
++++ b/client/src/pages/tas/TASAdminPage.tsx
+@@ -60,6 +60,7 @@ export default function TASAdminPage() {
+   const { user } = useAuth();
+   const isAdmin = ['Admin', 'admin'].includes(user?.role || '');
+   const vehiclesQ = trpc.tas.catalog.listVehicles.useQuery();
++  const vehicleBrandsQ = trpc.tas.vehicleBrands.list.useQuery({ activeOnly: true });
+   const branchesQ = trpc.tas.branches.list.useQuery();
+   const programsQ = trpc.tas.finance.listPrograms.useQuery();
+   const typesQ = trpc.tas.service.listTypes.useQuery();
+@@ -73,7 +74,7 @@ export default function TASAdminPage() {
+   const createType = trpc.tas.service.createType.useMutation({ onSuccess: () => { toast.success(isRTL ? 'تمت إضافة نوع الخدمة' : 'Service type added'); typesQ.refetch(); } });
+   const upsertIntegration = trpc.tas.channels.upsertIntegration.useMutation({ onSuccess: () => { toast.success(isRTL ? 'تم حفظ التكامل' : 'Integration saved'); integrationsQ.refetch(); } });
+ 
+-  const [vehicle, setVehicle] = useState({ brand: '', model: '', trim: '', modelYear: '', cashPrice: '', colors: '', specs: '' });
++  const [vehicle, setVehicle] = useState({ brandId: '', brand: '', model: '', trim: '', modelYear: '', cashPrice: '', colors: '', specs: '' });
+   const [branch, setBranch] = useState({ name: '', city: '', phone: '', workingHours: '', capacityPerSlot: '2' });
+   const [program, setProgram] = useState({ vehicleId: '', bankName: '', programName: '', minimumDownPaymentPct: '10', annualInterestRatePct: '0', adminFeeFixed: '0', insuranceFixed: '0', termOptions: '12,24,36,48,60' });
+   const [serviceType, setServiceType] = useState({ name: '', category: 'PeriodicMaintenance', durationMinutes: '60', defaultCapacityUnits: '1', notes: '' });
+@@ -175,7 +176,7 @@ export default function TASAdminPage() {
+               >
+                 <div className="space-y-3">
+                   <div className="grid gap-3 md:grid-cols-2">
+-                    <FieldGroup><FieldLabel>{isRTL ? 'الماركة' : 'Brand'}</FieldLabel><Input className="h-10 rounded-xl border-zinc-200 bg-zinc-50 text-sm" value={vehicle.brand} onChange={(e) => setVehicle((p) => ({ ...p, brand: e.target.value }))} /></FieldGroup>
++                    <FieldGroup><FieldLabel>{isRTL ? 'الماركة' : 'Brand'}</FieldLabel><Select value={vehicle.brandId} onValueChange={(brandId) => { const brand = (vehicleBrandsQ.data ?? []).find((row: any) => String(row.id) === brandId); setVehicle((p) => ({ ...p, brandId, brand: brand?.nameEn ?? '' })); }}><SelectTrigger className="h-10 rounded-xl border-zinc-200 bg-zinc-50 text-sm"><SelectValue placeholder={isRTL ? 'اختر الماركة' : 'Select brand'} /></SelectTrigger><SelectContent>{(vehicleBrandsQ.data ?? []).map((brand: any) => <SelectItem key={brand.id} value={String(brand.id)}>{isRTL ? (brand.nameAr || brand.nameEn) : brand.nameEn}</SelectItem>)}</SelectContent></Select></FieldGroup>
+                     <FieldGroup><FieldLabel>{isRTL ? 'الموديل' : 'Model'}</FieldLabel><Input className="h-10 rounded-xl border-zinc-200 bg-zinc-50 text-sm" value={vehicle.model} onChange={(e) => setVehicle((p) => ({ ...p, model: e.target.value }))} /></FieldGroup>
+                     <FieldGroup><FieldLabel>{isRTL ? 'الفئة' : 'Trim'}</FieldLabel><Input className="h-10 rounded-xl border-zinc-200 bg-zinc-50 text-sm" value={vehicle.trim} onChange={(e) => setVehicle((p) => ({ ...p, trim: e.target.value }))} /></FieldGroup>
+                     <FieldGroup><FieldLabel>{isRTL ? 'سنة الموديل' : 'Model year'}</FieldLabel><Input className="h-10 rounded-xl border-zinc-200 bg-zinc-50 text-sm" value={vehicle.modelYear} onChange={(e) => setVehicle((p) => ({ ...p, modelYear: e.target.value }))} /></FieldGroup>
+@@ -186,7 +187,7 @@ export default function TASAdminPage() {
+                   <Button
+                     className="w-full bg-[#0a1f44] text-white hover:bg-[#0d2550]"
+                     disabled={!isAdmin || createVehicle.isPending || !vehicle.brand || !vehicle.model}
+-                    onClick={() => createVehicle.mutate({ brand: vehicle.brand, model: vehicle.model, trim: vehicle.trim || undefined, modelYear: vehicle.modelYear ? Number(vehicle.modelYear) : undefined, cashPrice: vehicle.cashPrice || undefined, colors: vehicle.colors ? vehicle.colors.split(',').map((c) => c.trim()).filter(Boolean) : undefined, specs: vehicle.specs ? { summary: vehicle.specs } : undefined })}
++                    onClick={() => createVehicle.mutate({ brandId: Number(vehicle.brandId), brand: vehicle.brand, model: vehicle.model, trim: vehicle.trim || undefined, modelYear: vehicle.modelYear ? Number(vehicle.modelYear) : undefined, cashPrice: vehicle.cashPrice || undefined, colors: vehicle.colors ? vehicle.colors.split(',').map((c) => c.trim()).filter(Boolean) : undefined, specs: vehicle.specs ? { summary: vehicle.specs } : undefined })}
+                   >
+                     <Plus size={14} className="me-2" />
+                     {isRTL ? 'إضافة السيارة' : 'Add vehicle'}
