@@ -106,6 +106,13 @@ for (const relative of [
     "CRMLayout RBAC import",
   );
 
+  layout = replaceRequired(
+    layout,
+    '  ListOrdered,\n} from "lucide-react";',
+    '  ListOrdered,\n  Shield,\n} from "lucide-react";',
+    "CRMLayout Shield icon import",
+  );
+
   const taraQuery = `  const taraModeratorProfileQ = trpc.tara.moderation.profile.useQuery(undefined, {\n    enabled: isAuthenticated,\n    retry: false,\n    refetchOnWindowFocus: false,\n  });\n`;
   const taraAndRbac = `${taraQuery}  const tasRbacQ = trpc.tasRbac.me.useQuery(undefined, {\n    enabled: isAuthenticated,\n    retry: false,\n    staleTime: 30_000,\n    refetchOnWindowFocus: false,\n  });\n`;
   layout = replaceRequired(layout, taraQuery, taraAndRbac, "CRMLayout RBAC query");
