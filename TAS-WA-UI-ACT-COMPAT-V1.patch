@@ -1,0 +1,24 @@
+diff --git a/server/services/waGatewayEmojiPickerComponent.test.ts b/server/services/waGatewayEmojiPickerComponent.test.ts
+--- a/server/services/waGatewayEmojiPickerComponent.test.ts
++++ b/server/services/waGatewayEmojiPickerComponent.test.ts
+@@
+ import {
+-  act,
+   createElement,
+   Fragment,
+   useRef,
+@@
+ } from "react";
+ import { createRoot, type Root } from "react-dom/client";
++import { act } from "react-dom/test-utils";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+diff --git a/server/services/waGatewayForwardMessageUi.test.ts b/server/services/waGatewayForwardMessageUi.test.ts
+--- a/server/services/waGatewayForwardMessageUi.test.ts
++++ b/server/services/waGatewayForwardMessageUi.test.ts
+@@
+-import React, { act } from "react";
++import React from "react";
+ import { createRoot } from "react-dom/client";
++import { act } from "react-dom/test-utils";
+ import { describe, expect, it, vi } from "vitest";
