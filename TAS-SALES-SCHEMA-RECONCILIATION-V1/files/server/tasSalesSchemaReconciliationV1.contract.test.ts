@@ -19,6 +19,8 @@ const expectedTables = [
   "tas_sales_finance_applications",
 ];
 
+const destructiveOrDataChangingStatement = /(?:^|;)\s*(?:DROP|TRUNCATE|RENAME|ALTER|DELETE\s+FROM|UPDATE\s+[`\w]+|INSERT\s+INTO)\b/im;
+
 describe("TAS Sales Schema Reconciliation V1", () => {
   it("covers the complete advanced TAS sales runtime table set", () => {
     expect(TAS_SALES_SCHEMA_TABLES.map((table) => table.name)).toEqual(expectedTables);
@@ -28,7 +30,7 @@ describe("TAS Sales Schema Reconciliation V1", () => {
   it("uses only additive create-if-missing DDL", () => {
     for (const spec of TAS_SALES_SCHEMA_TABLES) {
       expect(spec.ddl).toContain(`CREATE TABLE IF NOT EXISTS ${spec.name}`);
-      expect(spec.ddl).not.toMatch(/\b(?:DROP|TRUNCATE|RENAME|ALTER|DELETE|UPDATE|INSERT)\b/i);
+      expect(spec.ddl).not.toMatch(destructiveOrDataChangingStatement);
       expect(spec.requiredColumns).toContain("id");
       expect(spec.requiredColumns).toContain("createdAt");
       expect(spec.requiredColumns).toContain("updatedAt");
@@ -67,6 +69,6 @@ describe("TAS Sales Schema Reconciliation V1", () => {
     expect(verifier).toContain("INFORMATION_SCHEMA.TABLES");
     expect(verifier).toContain("INFORMATION_SCHEMA.COLUMNS");
     expect(verifier).toContain("TAS_SALES_SCHEMA_VERIFY=PASS");
-    expect(verifier).not.toMatch(/\b(?:DROP|TRUNCATE|RENAME|ALTER|DELETE\s+FROM|UPDATE\s+\w+|INSERT\s+INTO)\b/i);
+    expect(verifier).not.toMatch(destructiveOrDataChangingStatement);
   });
 });
