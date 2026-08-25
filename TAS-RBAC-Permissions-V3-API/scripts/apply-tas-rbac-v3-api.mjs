@@ -121,4 +121,22 @@ routers = replaceBetween(
 
 fs.writeFileSync(routersPath, routers);
 console.log("[RBAC V3] integrated server/routers.ts");
+
+// The queue hotfix contract previously asserted the legacy builder literally.
+// V3 intentionally upgrades excelQueues to tasPermissionProcedure, so align the
+// existing regression contract with the stronger server-side authorization.
+const queueContractPath = path.join(targetRoot, "server", "tasQueueFeedbackUiHotfix.test.ts");
+if (!fs.existsSync(queueContractPath)) {
+  throw new Error("Missing queue feedback contract: server/tasQueueFeedbackUiHotfix.test.ts");
+}
+let queueContract = fs.readFileSync(queueContractPath, "utf8");
+queueContract = replaceRequired(
+  queueContract,
+  '    expect(router).toContain("excelQueues: protectedProcedure");',
+  '    expect(router).toContain("excelQueues: tasPermissionProcedure");',
+  "queue feedback RBAC contract",
+);
+fs.writeFileSync(queueContractPath, queueContract);
+console.log("[RBAC V3] aligned server/tasQueueFeedbackUiHotfix.test.ts with RBAC procedure");
+
 console.log("[RBAC V3] apply complete");
