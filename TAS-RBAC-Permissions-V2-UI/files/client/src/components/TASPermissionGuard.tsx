@@ -8,15 +8,18 @@ import { useTasRbac, type TasRbacAction, type TasRbacModule } from "@/lib/tasRba
 export default function TASPermissionGuard({
   module,
   action = "view",
+  adminOnly = false,
   children,
 }: {
   module: TasRbacModule;
   action?: TasRbacAction;
+  adminOnly?: boolean;
   children: ReactNode;
 }) {
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const { isRTL } = useLanguage();
   const rbac = useTasRbac(isAuthenticated);
+  const isAdmin = ["Admin", "admin"].includes(String(user?.role ?? ""));
 
   if (rbac.isLoading || rbac.isFetching) {
     return (
@@ -29,7 +32,7 @@ export default function TASPermissionGuard({
     );
   }
 
-  if (rbac.error || !rbac.can(module, action)) {
+  if (rbac.error || (adminOnly && !isAdmin) || !rbac.can(module, action)) {
     return (
       <CRMLayout>
         <div className="mx-auto flex min-h-[65vh] max-w-xl items-center justify-center p-6" dir={isRTL ? "rtl" : "ltr"}>
