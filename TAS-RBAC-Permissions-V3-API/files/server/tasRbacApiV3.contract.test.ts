@@ -65,6 +65,12 @@ describe("TAS RBAC Permissions V3 API contract", () => {
     }
   });
 
+  it("keeps the competitive queue regression contract aligned with RBAC enforcement", () => {
+    const queueContract = read("server/tasQueueFeedbackUiHotfix.test.ts");
+    expect(queueContract).toContain('expect(router).toContain("excelQueues: tasPermissionProcedure")');
+    expect(queueContract).not.toContain('expect(router).toContain("excelQueues: protectedProcedure")');
+  });
+
   it("ships explicit fail-closed scope handling", () => {
     const access = read("server/tasRbacApiAccess.ts");
     expect(access).toContain('if (scope === "branch")');
