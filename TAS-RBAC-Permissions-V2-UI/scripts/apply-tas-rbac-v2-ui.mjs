@@ -32,6 +32,7 @@ for (const relative of [
   "client/src/lib/tasRbac.ts",
   "client/src/components/TASPermissionGuard.tsx",
   "client/src/pages/tas/TASRolesPermissionsPage.tsx",
+  "server/tasRbacUiV2.contract.test.ts",
 ]) {
   copyPayload(relative);
 }
