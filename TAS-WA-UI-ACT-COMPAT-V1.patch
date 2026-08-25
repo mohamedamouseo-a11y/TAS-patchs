@@ -1,24 +1,32 @@
 diff --git a/server/services/waGatewayEmojiPickerComponent.test.ts b/server/services/waGatewayEmojiPickerComponent.test.ts
 --- a/server/services/waGatewayEmojiPickerComponent.test.ts
 +++ b/server/services/waGatewayEmojiPickerComponent.test.ts
-@@
+@@ -1,14 +1,14 @@
+ // @vitest-environment happy-dom
+ 
  import {
 -  act,
    createElement,
    Fragment,
    useRef,
-@@
+   type KeyboardEvent as ReactKeyboardEvent,
+   type MouseEvent as ReactMouseEvent,
+   type ReactElement,
+   type ReactNode,
  } from "react";
  import { createRoot, type Root } from "react-dom/client";
 +import { act } from "react-dom/test-utils";
  import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+ 
 diff --git a/server/services/waGatewayForwardMessageUi.test.ts b/server/services/waGatewayForwardMessageUi.test.ts
 --- a/server/services/waGatewayForwardMessageUi.test.ts
 +++ b/server/services/waGatewayForwardMessageUi.test.ts
-@@
+@@ -1,6 +1,7 @@
+ // @vitest-environment happy-dom
+ 
 -import React, { act } from "react";
 +import React from "react";
  import { createRoot } from "react-dom/client";
 +import { act } from "react-dom/test-utils";
  import { describe, expect, it, vi } from "vitest";
+ 
