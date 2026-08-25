@@ -37,9 +37,11 @@ describe("TAS RBAC Permissions V2 UI contract", () => {
   it("filters TAS sidebar entries from effective RBAC permissions instead of fixed roles", () => {
     const layout = read("client/src/components/CRMLayout.tsx");
     expect(layout).toContain('import { tasModuleForPath } from "@/lib/tasRbac";');
+    expect(layout).toContain("  Shield,\n} from \"lucide-react\";");
     expect(layout).toContain("const tasRbacQ = trpc.tasRbac.me.useQuery");
     expect(layout).toContain("canUseHref(item.href, item.roles)");
     expect(layout).toContain('customSidebarItem("/tas/admin/permissions"');
+    expect(layout).toContain('<Shield size={15} />');
   });
 
   it("ships a full roles matrix editor and user-role assignment UI", () => {
