@@ -85,6 +85,11 @@ export const tasRbacRouter = router({
     permissions: await effectiveTasPermissions(ctx.user),
   })),
 
+  listUsers: adminProcedure.query(async () => {
+    const [rows] = await getPool().query<any[]>("SELECT id, name, email, role FROM users WHERE deletedAt IS NULL ORDER BY name, email");
+    return rows;
+  }),
+
   listRoles: adminProcedure.query(async () => {
     const [roles] = await getPool().query<any[]>("SELECT id, role_key roleKey, name_ar nameAr, name_en nameEn, description, is_system isSystem, is_active isActive FROM tas_rbac_roles WHERE is_active=1 ORDER BY is_system DESC, name_en");
     const result = [];
