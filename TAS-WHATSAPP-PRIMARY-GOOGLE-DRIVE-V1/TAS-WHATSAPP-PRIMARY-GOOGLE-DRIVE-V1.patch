@@ -1,0 +1,115 @@
+diff --git a/server/services/waGatewayRuntimeConfig.ts b/server/services/waGatewayRuntimeConfig.ts
+--- a/server/services/waGatewayRuntimeConfig.ts
++++ b/server/services/waGatewayRuntimeConfig.ts
+@@
+   if (secret.length < 32) issues.push({
+     key: "WA_GATEWAY_INTEGRATION_SECRET",
+     message: "WA_GATEWAY_INTEGRATION_SECRET or AUTH_SETTINGS_ENCRYPTION_KEY must contain at least 32 characters",
+   });
+-  const driveCreds = Boolean(runtimeEnv.GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON || runtimeEnv.GOOGLE_BACKUP_SERVICE_ACCOUNT_FILE);
+-  if (!driveCreds) issues.push({ key: "GOOGLE_BACKUP_SERVICE_ACCOUNT", message: "Google Drive Service Account credentials are required" });
+   return issues;
+ }
+ 
+diff --git a/server/services/waGatewayRuntimeConfig.test.ts b/server/services/waGatewayRuntimeConfig.test.ts
+--- a/server/services/waGatewayRuntimeConfig.test.ts
++++ b/server/services/waGatewayRuntimeConfig.test.ts
+@@
+ const base = {
+   NODE_ENV: "production",
+   WA_GATEWAY_INSTANCE_ID: "tas-production-01",
+   WA_GATEWAY_PUBLIC_URL: "https://tas.example.com",
+   WA_GATEWAY_INTEGRATION_SECRET: "x".repeat(32),
+-  GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON: "{}",
+ } as NodeJS.ProcessEnv;
+@@
+   it("accepts the existing TAS encryption key as a secure fallback", () => {
+     const env = { ...base, WA_GATEWAY_INTEGRATION_SECRET: "", AUTH_SETTINGS_ENCRYPTION_KEY: "y".repeat(32) };
+     expect(validateWAGatewayRuntimeEnvironment(env)).toEqual([]);
+   });
++
++  it("does not require a second Google Service Account credential for WhatsApp runtime", () => {
++    const env = {
++      ...base,
++      GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON: "",
++      GOOGLE_BACKUP_SERVICE_ACCOUNT_FILE: "",
++    };
++    expect(validateWAGatewayRuntimeEnvironment(env)).toEqual([]);
++  });
+@@
+       writeFileSync(path.join(sharedRuntime, ".env"), [
+         "NODE_ENV=production",
+         "WA_GATEWAY_INSTANCE_ID=tas-production-01",
+         "WA_GATEWAY_PUBLIC_URL=https://tas.example.com",
+         `WA_GATEWAY_INTEGRATION_SECRET=${"s".repeat(32)}`,
+-        "GOOGLE_BACKUP_SERVICE_ACCOUNT_FILE=/secure/google-service-account.json",
+         "",
+       ].join("\n"), "utf8");
+ 
+diff --git a/server/services/waGatewayDriveReadiness.ts b/server/services/waGatewayDriveReadiness.ts
+--- a/server/services/waGatewayDriveReadiness.ts
++++ b/server/services/waGatewayDriveReadiness.ts
+@@
+ import { createHash } from "node:crypto";
+-import { readFile } from "node:fs/promises";
+ import { Readable } from "node:stream";
+ import { eq } from "drizzle-orm";
+ import { themeSettings } from "../../drizzle/schema";
+ import { getDb } from "../db";
+ import { parseBoundedPositiveInt } from "../utils/envLimits";
+-import { getGoogleDriveClient } from "./GoogleBackupService.js";
+ import { getGoogleDrivePrimaryStorageConfig } from "./GoogleDrivePrimaryStorageService.js";
++import { getTasGoogleDriveClient, getTasGoogleDriveFileStorageSettings } from "./tasGoogleDriveOAuthService.js";
+ import { getWAGatewayInstanceId } from "./waGatewayInstanceIdentity";
+@@
+ async function credentialFingerprint() {
+-  const inline = String(process.env.GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON || "").trim();
+-  if (inline) return createHash("sha256").update(inline).digest("hex");
+-  const filePath = String(process.env.GOOGLE_BACKUP_SERVICE_ACCOUNT_FILE || "").trim();
+-  if (!filePath) return null;
+-  const content = await readFile(filePath);
+-  return createHash("sha256").update(content).digest("hex");
++  const settings = await getTasGoogleDriveFileStorageSettings({ includeSecrets: true });
++  if (!settings.connected || !settings.refreshToken) return null;
++  return createHash("sha256")
++    .update(JSON.stringify({
++      clientId: settings.clientId || "",
++      refreshToken: settings.refreshToken,
++      redirectUri: settings.redirectUri || "",
++      scope: settings.scope || "",
++    }))
++    .digest("hex");
+ }
+@@
+ async function resolveRawContext(): Promise<WAGatewayDriveReadyContext> {
+   const config = await getGoogleDrivePrimaryStorageConfig();
+-  if (!config.enabled) throw Object.assign(new Error("فعّل Google Drive كتخزين أساسي قبل استخدام ميديا واتساب"), { readinessCode: "storage_disabled" });
++  if (!config.enabled) throw Object.assign(new Error("Google Drive الأساسي غير جاهز. فعّله واربطه واختبر الاتصال من إعدادات التخزين أولًا"), { readinessCode: "storage_disabled" });
+   const rootFolderId = String(config.rootFolderId || "").trim();
+-  if (!rootFolderId) throw Object.assign(new Error("أدخل مجلد Primary Storage داخل Shared Drive"), { readinessCode: "missing_folder" });
++  if (!rootFolderId) throw Object.assign(new Error("مجلد Google Drive الأساسي غير محدد"), { readinessCode: "missing_folder" });
+   const fingerprint = await credentialFingerprint().catch(() => null);
+-  if (!fingerprint) throw Object.assign(new Error("بيانات Service Account غير موجودة أو غير صالحة"), { readinessCode: "missing_credentials" });
++  if (!fingerprint) throw Object.assign(new Error("اتصال Google Drive الأساسي غير متصل أو يحتاج إعادة ربط"), { readinessCode: "missing_credentials" });
+   const instanceId = getWAGatewayInstanceId();
+-  const drive = await getGoogleDriveClient();
++  const drive = await getTasGoogleDriveClient();
+   const folder = await drive.files.get({
+     fileId: rootFolderId,
+     supportsAllDrives: true,
+     fields: "id,name,mimeType,trashed,driveId,capabilities(canAddChildren,canTrashChildren)",
+@@
+   if (folder.data.trashed || folder.data.mimeType !== FOLDER_MIME) {
+     throw new Error("مجلد Google Drive الأساسي غير صالح");
+   }
+-  const sharedDriveId = String(folder.data.driveId || "").trim();
+-  if (!sharedDriveId) throw new Error("ميديا واتساب تتطلب مجلدًا داخل Shared Drive عند استخدام Service Account");
+-  if (folder.data.capabilities?.canAddChildren === false) throw new Error("Service Account لا يملك صلاحية رفع الملفات داخل Shared Drive");
+-  if (folder.data.capabilities?.canTrashChildren === false) throw new Error("Service Account يحتاج صلاحية Content Manager أو Manager داخل Shared Drive");
++  const sharedDriveId = String(folder.data.driveId || "").trim() || "oauth-my-drive";
++  if (folder.data.capabilities?.canAddChildren === false) throw new Error("حساب Google Drive المتصل لا يملك صلاحية رفع الملفات داخل مجلد التخزين الأساسي");
++  if (folder.data.capabilities?.canTrashChildren === false) throw new Error("حساب Google Drive المتصل لا يملك صلاحية حذف ملفات ميديا واتساب من مجلد التخزين الأساسي");
+   return {
+@@
+-  if (record.credentialFingerprint && record.credentialFingerprint !== context.credentialFingerprint) return blocked("credentials_changed", "تم تغيير بيانات Service Account وسيعاد اختبارها تلقائيًا");
++  if (record.credentialFingerprint && record.credentialFingerprint !== context.credentialFingerprint) return blocked("credentials_changed", "تم تغيير اتصال Google Drive وسيعاد اختباره تلقائيًا");
