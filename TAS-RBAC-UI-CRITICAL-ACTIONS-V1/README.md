@@ -50,11 +50,13 @@ From the `TAS-patchs` checkout on branch:
 
 `patch/tas-rbac-ui-critical-actions-v1`
 
-run:
+run the compatibility installer:
 
 ```bash
-node TAS-RBAC-UI-CRITICAL-ACTIONS-V1/scripts/apply-tas-rbac-ui-critical-actions-v1.mjs --target <TAS_WORKTREE>
+node TAS-RBAC-UI-CRITICAL-ACTIONS-V1/scripts/apply-tas-rbac-ui-critical-actions-v1-compatible.mjs --target <TAS_WORKTREE>
 ```
+
+The compatibility installer also handles a worktree where the earlier `VehicleCatalogPage` archive-only RBAC patch is already present.
 
 Expected:
 
