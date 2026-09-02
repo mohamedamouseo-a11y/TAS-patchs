@@ -1,0 +1,249 @@
+diff --git a/scripts/cleanup-tas-excel-import-data.ts b/scripts/cleanup-tas-excel-import-data.ts
+new file mode 100644
+--- /dev/null
++++ b/scripts/cleanup-tas-excel-import-data.ts
+@@
++import "dotenv/config";
++import mysql from "mysql2/promise";
++
++const APPLY = process.argv.includes("--apply");
++const CONFIRM_TOKEN = "DELETE_TAS_EXCEL_IMPORT_DATA";
++const confirmation = process.argv.find((arg) => arg.startsWith("--confirm="))?.slice("--confirm=".length) || "";
++
++if (APPLY && confirmation !== CONFIRM_TOKEN) {
++  console.error(`Refusing destructive cleanup. Re-run with --apply --confirm=${CONFIRM_TOKEN}`);
++  process.exit(2);
++}
++
++const databaseUrl = String(process.env.DATABASE_URL || "").trim();
++if (!databaseUrl) {
++  console.error("DATABASE_URL is not configured");
++  process.exit(2);
++}
++
++type Row = Record<string, any>;
++const connection = await mysql.createConnection(databaseUrl);
++
++const rows = async (sql: string, params: unknown[] = []) => {
++  const [result] = await connection.query(sql, params);
++  return result as Row[];
++};
++
++const one = async (sql: string, params: unknown[] = []) => (await rows(sql, params))[0] || {};
++const count = async (sql: string, params: unknown[] = []) => Number((await one(sql, params)).total || 0);
++const quoteId = (value: string) => `\`${String(value).replace(/`/g, "``")}\``;
++
++try {
++  const databaseName = String((await one("SELECT DATABASE() AS db")).db || "");
++  if (!databaseName) throw new Error("Could not resolve active database name");
++
++  const tableExists = async (tableName: string) =>
++    Boolean(Number((await one(
++      "SELECT COUNT(*) AS total FROM information_schema.tables WHERE table_schema = ? AND table_name = ?",
++      [databaseName, tableName],
++    )).total || 0));
++
++  for (const required of ["leads", "tas_excel_import_batches"]) {
++    if (!(await tableExists(required))) throw new Error(`Required table missing: ${required}`);
++  }
++
++  await connection.query("CREATE TEMPORARY TABLE tmp_tas_excel_cleanup_batches (id INT PRIMARY KEY) ENGINE=MEMORY");
++  await connection.query("CREATE TEMPORARY TABLE tmp_tas_excel_cleanup_leads (id INT PRIMARY KEY) ENGINE=MEMORY");
++  await connection.query("CREATE TEMPORARY TABLE tmp_tas_excel_cleanup_queues (id INT PRIMARY KEY) ENGINE=MEMORY");
++  await connection.query("CREATE TEMPORARY TABLE tmp_tas_excel_cleanup_conversations (id INT PRIMARY KEY) ENGINE=MEMORY");
++  await connection.query("CREATE TEMPORARY TABLE tmp_tas_excel_cleanup_messages (id INT PRIMARY KEY) ENGINE=MEMORY");
++
++  await connection.query(`
++    INSERT IGNORE INTO tmp_tas_excel_cleanup_batches (id)
++    SELECT id FROM tas_excel_import_batches
++  `);
++
++  await connection.query(`
++    INSERT IGNORE INTO tmp_tas_excel_cleanup_leads (id)
++    SELECT id
++    FROM leads
++    WHERE JSON_UNQUOTE(JSON_EXTRACT(sourceMetadata, '$.source')) = 'Excel Import'
++  `);
++
++  if (await tableExists("tas_lead_queue_entries")) {
++    await connection.query(`
++      INSERT IGNORE INTO tmp_tas_excel_cleanup_leads (id)
++      SELECT e.leadId
++      FROM tas_lead_queue_entries e
++      INNER JOIN tmp_tas_excel_cleanup_batches b ON b.id = e.importBatchId
++      WHERE e.leadId IS NOT NULL
++    `);
++  }
++
++  if (await tableExists("tas_lead_brand_interests")) {
++    await connection.query(`
++      INSERT IGNORE INTO tmp_tas_excel_cleanup_leads (id)
++      SELECT i.leadId
++      FROM tas_lead_brand_interests i
++      INNER JOIN tmp_tas_excel_cleanup_batches b ON b.id = i.importBatchId
++      WHERE i.leadId IS NOT NULL
++        AND (i.source = 'excel_import' OR i.source IS NULL)
++    `);
++  }
++
++  if (await tableExists("tas_lead_queues")) {
++    await connection.query(`
++      INSERT IGNORE INTO tmp_tas_excel_cleanup_queues (id)
++      SELECT q.id
++      FROM tas_lead_queues q
++      INNER JOIN tmp_tas_excel_cleanup_batches b ON b.id = q.importBatchId
++    `);
++  }
++
++  if (await tableExists("tas_conversations")) {
++    await connection.query(`
++      INSERT IGNORE INTO tmp_tas_excel_cleanup_conversations (id)
++      SELECT c.id
++      FROM tas_conversations c
++      INNER JOIN tmp_tas_excel_cleanup_leads l ON l.id = c.leadId
++    `);
++  }
++
++  if (await tableExists("tas_conversation_messages")) {
++    await connection.query(`
++      INSERT IGNORE INTO tmp_tas_excel_cleanup_messages (id)
++      SELECT m.id
++      FROM tas_conversation_messages m
++      INNER JOIN tmp_tas_excel_cleanup_conversations c ON c.id = m.conversationId
++    `);
++  }
++
++  const targetCounts = {
++    importBatches: await count("SELECT COUNT(*) AS total FROM tmp_tas_excel_cleanup_batches"),
++    leads: await count("SELECT COUNT(*) AS total FROM tmp_tas_excel_cleanup_leads"),
++    queues: await count("SELECT COUNT(*) AS total FROM tmp_tas_excel_cleanup_queues"),
++    conversations: await count("SELECT COUNT(*) AS total FROM tmp_tas_excel_cleanup_conversations"),
++    conversationMessages: await count("SELECT COUNT(*) AS total FROM tmp_tas_excel_cleanup_messages"),
++  };
++
++  const duplicateCrossReferences = await count(`
++    SELECT COUNT(*) AS total
++    FROM leads candidate
++    INNER JOIN tmp_tas_excel_cleanup_leads target ON target.id = candidate.duplicateOfId
++    LEFT JOIN tmp_tas_excel_cleanup_leads selfTarget ON selfTarget.id = candidate.id
++    WHERE selfTarget.id IS NULL
++  `);
++
++  const referenceSets = [
++    { column: "conversationMessageId", tempTable: "tmp_tas_excel_cleanup_messages" },
++    { column: "conversationId", tempTable: "tmp_tas_excel_cleanup_conversations" },
++    { column: "queueId", tempTable: "tmp_tas_excel_cleanup_queues" },
++    { column: "leadId", tempTable: "tmp_tas_excel_cleanup_leads" },
++    { column: "importBatchId", tempTable: "tmp_tas_excel_cleanup_batches" },
++  ];
++
++  const referenceTables = new Map<string, { tableName: string; column: string; tempTable: string; count: number }>();
++  for (const ref of referenceSets) {
++    const columnRows = await rows(
++      "SELECT table_name AS tableName FROM information_schema.columns WHERE table_schema = ? AND column_name = ? ORDER BY table_name",
++      [databaseName, ref.column],
++    );
++    for (const row of columnRows) {
++      const tableName = String(row.tableName || "");
++      if (!tableName || tableName.startsWith("tmp_tas_excel_cleanup_")) continue;
++      const key = `${tableName}:${ref.column}`;
++      const affected = await count(
++        `SELECT COUNT(*) AS total FROM ${quoteId(tableName)} t INNER JOIN ${quoteId(ref.tempTable)} x ON t.${quoteId(ref.column)} = x.id`,
++      );
++      referenceTables.set(key, { tableName, column: ref.column, tempTable: ref.tempTable, count: affected });
++    }
++  }
++
++  let notificationCount = 0;
++  if (await tableExists("in_app_notifications")) {
++    notificationCount = await count(`
++      SELECT COUNT(*) AS total
++      FROM in_app_notifications n
++      INNER JOIN tmp_tas_excel_cleanup_leads l
++        ON CAST(JSON_UNQUOTE(JSON_EXTRACT(n.metadata, '$.leadId')) AS UNSIGNED) = l.id
++    `);
++  }
++
++  console.log("TAS Excel Import cleanup target counts:");
++  console.log(JSON.stringify({ ...targetCounts, notifications: notificationCount, duplicateCrossReferences }, null, 2));
++  console.log("Affected reference rows by table/column:");
++  for (const item of [...referenceTables.values()].filter((item) => item.count > 0)) {
++    console.log(`${item.tableName}.${item.column}=${item.count}`);
++  }
++
++  if (!APPLY) {
++    console.log("TAS_EXCEL_IMPORT_CLEANUP=DRY_RUN");
++    process.exitCode = 0;
++  } else {
++    if (duplicateCrossReferences > 0) {
++      throw new Error(`Cleanup blocked: ${duplicateCrossReferences} non-target lead(s) reference an imported lead through duplicateOfId`);
++    }
++
++    await connection.beginTransaction();
++    try {
++      if (notificationCount > 0) {
++        await connection.query(`
++          DELETE n
++          FROM in_app_notifications n
++          INNER JOIN tmp_tas_excel_cleanup_leads l
++            ON CAST(JSON_UNQUOTE(JSON_EXTRACT(n.metadata, '$.leadId')) AS UNSIGNED) = l.id
++        `);
++      }
++
++      for (const ref of referenceSets) {
++        const items = [...referenceTables.values()].filter((item) => item.column === ref.column && item.count > 0);
++        for (const item of items) {
++          if (item.tableName === "leads" || item.tableName === "tas_excel_import_batches") continue;
++          await connection.query(
++            `DELETE t FROM ${quoteId(item.tableName)} t INNER JOIN ${quoteId(item.tempTable)} x ON t.${quoteId(item.column)} = x.id`,
++          );
++        }
++      }
++
++      await connection.query(`
++        DELETE l
++        FROM leads l
++        INNER JOIN tmp_tas_excel_cleanup_leads target ON target.id = l.id
++      `);
++
++      await connection.query(`
++        DELETE b
++        FROM tas_excel_import_batches b
++        INNER JOIN tmp_tas_excel_cleanup_batches target ON target.id = b.id
++      `);
++
++      const remainingRefs: string[] = [];
++      for (const item of referenceTables.values()) {
++        if (item.tableName === "leads" || item.tableName === "tas_excel_import_batches") continue;
++        const remaining = await count(
++          `SELECT COUNT(*) AS total FROM ${quoteId(item.tableName)} t INNER JOIN ${quoteId(item.tempTable)} x ON t.${quoteId(item.column)} = x.id`,
++        );
++        if (remaining > 0) remainingRefs.push(`${item.tableName}.${item.column}=${remaining}`);
++      }
++
++      const remainingLeads = await count(`
++        SELECT COUNT(*) AS total
++        FROM leads
++        WHERE JSON_UNQUOTE(JSON_EXTRACT(sourceMetadata, '$.source')) = 'Excel Import'
++      `);
++      const remainingBatches = await count("SELECT COUNT(*) AS total FROM tas_excel_import_batches");
++
++      if (remainingRefs.length || remainingLeads || remainingBatches) {
++        throw new Error(`Post-cleanup verification failed: refs=${remainingRefs.join(",") || "0"}; leads=${remainingLeads}; batches=${remainingBatches}`);
++      }
++
++      await connection.commit();
++      console.log(JSON.stringify({ deletedTargets: targetCounts, deletedNotifications: notificationCount }, null, 2));
++      console.log("TAS_EXCEL_IMPORT_CLEANUP=PASS");
++    } catch (error) {
++      await connection.rollback();
++      throw error;
++    }
++  }
++} catch (error: any) {
++  console.error(String(error?.message || error));
++  console.error("TAS_EXCEL_IMPORT_CLEANUP=FAIL");
++  process.exitCode = 1;
++} finally {
++  await connection.end();
++}
