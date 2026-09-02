@@ -1,6 +1,6 @@
 # TAS RBAC Role Matrix Tests V1
 
-Audit-only patch for TAS roles and permissions. It adds automated tests and a live database verifier. It does not change production permission behavior.
+Audit-only patch for TAS roles and permissions. It adds automated tests, a live database verifier, and a UI role-gate audit. It does not change production permission behavior.
 
 ## Coverage
 
@@ -12,6 +12,7 @@ Audit-only patch for TAS roles and permissions. It adds automated tests and a li
 - Backend API module/action inference is verified for view/create/edit/delete/export/approve/assign.
 - A live verifier reads active roles and their persisted matrices from MySQL and checks that `authorizeTasApiRequest` allows/denies representative TAS operations exactly according to each stored role matrix.
 - The live verifier fails if an active permission uses `branch` scope because current backend enforcement is intentionally fail-closed for branch scope until explicit user-to-branch membership is configured.
+- A UI audit scans TAS/Automotive pages for direct hard-coded role gates that are not locally using `useTasRbac`, `TASPermissionGuard`, or `canFromTasMatrix`.
 
 ## Files added to TAS
 
@@ -19,6 +20,7 @@ Audit-only patch for TAS roles and permissions. It adds automated tests and a li
 - `server/tasRbacApiAccess.test.ts`
 - `client/src/lib/tasRbac.test.ts`
 - `scripts/verify-tas-rbac-live.ts`
+- `scripts/audit-tas-rbac-ui-gates.mjs`
 
 ## Apply to an isolated TAS worktree
 
@@ -34,7 +36,7 @@ Expected marker:
 TAS_RBAC_TEST_PATCH_APPLY=PASS
 ```
 
-The installer is fail-safe: it only adds the four audit files. If a destination file already exists with different content, it stops instead of overwriting it.
+The installer is fail-safe: it only adds the audit files. If a destination file already exists with different content, it stops instead of overwriting it.
 
 ## Run automated tests
 
@@ -59,8 +61,16 @@ TAS_RBAC_LIVE_VERIFY=PASS
 
 If it fails, the output includes exact `role.module.action` mismatches and configuration problems.
 
+## Audit hard-coded UI role gates
+
+```bash
+node scripts/audit-tas-rbac-ui-gates.mjs
+```
+
+This command is report-only by default. It prints TAS/Automotive pages that contain direct role checks without a local RBAC helper/guard. To make warnings fail the command, add `--strict`.
+
 ## Important
 
-This patch is audit-only. If a test fails, do not automatically loosen permissions or alter role matrices. Report the failing role/module/action first so the business intent can be confirmed before any production permission change.
+This patch is audit-only. If a test or verifier fails, do not automatically loosen permissions or alter role matrices. Report the failing role/module/action first so the business intent can be confirmed before any production permission change.
 
 Do not merge or push to `master` as part of applying this patch. The execution agent should stop after the local branch commit so the final push can be done separately from Developer Hub.
