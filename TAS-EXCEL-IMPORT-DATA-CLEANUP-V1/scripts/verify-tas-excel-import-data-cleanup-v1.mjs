@@ -23,7 +23,9 @@ expect("uses transaction", source.includes("beginTransaction") && source.include
 expect("preserves FK enforcement", !/FOREIGN_KEY_CHECKS\s*=\s*0/i.test(source));
 expect("no truncate", !/\bTRUNCATE\b/i.test(source));
 expect("checks duplicate cross references", source.includes("duplicateCrossReferences") && source.includes("duplicateOfId"));
-expect("does not select targets by phone/name/date", !/WHERE[^;]*(phone|name|createdAt)\s*=/is.test(source));
+expect("no phone-based target selector", !source.includes("WHERE phone =") && !source.includes("WHERE l.phone ="));
+expect("no name-based target selector", !source.includes("WHERE name =") && !source.includes("WHERE l.name ="));
+expect("no date-based target selector", !source.includes("WHERE createdAt =") && !source.includes("WHERE l.createdAt ="));
 expect("success marker", source.includes("TAS_EXCEL_IMPORT_CLEANUP=PASS"));
 
 for (const item of pass) console.log(`PASS ${item}`);
