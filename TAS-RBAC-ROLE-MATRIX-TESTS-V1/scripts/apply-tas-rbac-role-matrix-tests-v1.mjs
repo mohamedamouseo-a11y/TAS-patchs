@@ -28,6 +28,7 @@ const files = [
   "server/tasRbacApiAccess.test.ts",
   "client/src/lib/tasRbac.test.ts",
   "scripts/verify-tas-rbac-live.ts",
+  "scripts/audit-tas-rbac-ui-gates.mjs",
 ];
 
 for (const relative of files) {
