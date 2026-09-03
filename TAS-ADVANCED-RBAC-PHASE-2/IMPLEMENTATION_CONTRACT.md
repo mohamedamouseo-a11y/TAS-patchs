@@ -2,7 +2,34 @@
 
 This document is authoritative for OpenHands/Developer Hub.
 
-## 1. Preserve the current RBAC foundation
+## 1. Authority model — MUST NOT be violated
+
+### Normal Admin
+
+`Admin` is the customer's operational administrator and must manage:
+
+- users
+- roles
+- module permissions
+- feature/page permissions
+- role assignment
+- RBAC audit
+- Excel Imports management
+- Competitive Queues
+- normal CRM/business configuration
+- customer-facing integration/settings pages
+
+The Roles & Permissions UI is an **Admin feature**, not SuperAdmin-only.
+
+### SuperAdmin
+
+If `SuperAdmin`, `Super Admin`, or `Super Administrator` exists in this deployment, keep it distinct from Admin. It is reserved for developer/vendor-only capabilities such as developer tools, source-control/GitHub controls exposed inside the product, deployment/code controls, low-level developer API configuration, and technical diagnostics.
+
+Do **not** normalize SuperAdmin to Admin in a way that collapses the distinction. Do **not** require SuperAdmin for normal business administration.
+
+If no SuperAdmin role exists in the current product, Phase 2 does not need to invent customer-facing SuperAdmin UI. Only preserve a clean extension point for technical-only permissions if developer tooling is later mapped.
+
+## 2. Preserve the current RBAC foundation
 
 Do not replace the existing system. Reuse:
 
@@ -19,7 +46,7 @@ Do not replace the existing system. Reuse:
 
 Existing module permissions remain the parent policy.
 
-## 2. Schema
+## 3. Schema
 
 Create `tas_rbac_feature_permissions` with optional role-specific feature overrides.
 
@@ -41,369 +68,271 @@ Required fields:
 Requirements:
 
 - unique `(role_id, feature_key)`
-- FK to `tas_rbac_roles(id)` is acceptable with cascade on role deletion only if roles are actually hard-deleted; current system soft-disables roles, so no destructive cascade is necessary
-- do not add user-data cascades
-- no feature rows are required for existing roles: absence means inherit parent module
+- absence of a feature row means inherit parent module
+- do not seed overrides for existing roles
+- no destructive user-data cascades
 
-The migration must be idempotent or safe to apply once with a clear verification section.
+Mirror the schema in application schema definitions where appropriate.
 
-## 3. Feature catalog
+## 4. Feature catalog
 
-Create a stable catalog in a shared location usable by server/client, or mirror it with a parity test.
+Create a stable shared catalog, or mirrored catalogs with a parity test.
 
-Each feature entry includes:
+Each entry includes a stable feature key, parent module, Arabic/English label, and route/API metadata where relevant.
 
-```ts
-{
-  key: "sales.excel_imports",
-  module: "sales",
-  labelAr: "استيرادات Excel",
-  labelEn: "Excel Imports",
-  routePrefixes?: ["/excel-imports"],
-}
-```
+Inventory the actual TAS/Automotive app. At minimum cover:
 
-Inventory the current app and map all TAS/Automotive/sidebar routes that are user-facing.
-
-At minimum include the feature keys listed in `README.md`.
-
-Do not use arbitrary role names as feature logic.
-
-## 4. Effective permission resolution
-
-Implement a single server source of truth for effective feature permissions.
-
-Pseudo-rule:
-
-```ts
-moduleGrant = effectiveTasPermissions(role)[feature.module]
-override = featureOverride(role, feature.key)
-
-featureGrant.action = moduleGrant.action && (override ? override.action : true)
-```
-
-Thus feature permissions can narrow parent permissions but cannot widen them.
-
-If parent `view=false`, every action for every child feature resolves false regardless of stored override.
-
-Feature data scope is inherited from the parent module in Phase 2. Do not create feature-specific data scopes yet.
-
-Admin resolves full access even with missing feature rows.
-
-## 5. Admin / Super Admin normalization
-
-The protected authority remains the current Admin semantics.
-
-Extend normalization only if needed so these legacy deployment values resolve to Admin:
-
-- `Admin`
-- `admin`
-- `SuperAdmin`
-- `Super Admin`
-- `Super Administrator`
-
-Do not let a custom role named similarly bypass protected Admin checks.
-
-The protected Admin role:
-
-- cannot be deleted
-- cannot have permissions weakened
-- can manage roles and feature overrides
-- can assign roles
-- can view RBAC audit information
-
-## 6. RBAC router extensions
-
-Extend `tasRbacRouter`.
-
-### `catalog`
-
-Return:
-
-- modules
-- actions
-- data scopes
-- feature catalog grouped by parent module
-
-### `me`
-
-Return:
-
-- normalized role
-- module permissions
-- effective feature permissions
-
-### `listRoles`
-
-Return each role with:
-
-- role metadata
-- module permissions
-- raw feature overrides
-- effective feature permissions
-
-### `saveRole`
-
-Accept module permissions and feature overrides in one transaction.
-
-Rules:
-
-- protected Admin cannot be weakened
-- validate every feature key against the catalog
-- validate feature belongs to known parent module
-- reject an override attempting to grant an action denied by the submitted parent module, or normalize it to false and return the normalized result
-- replace only that role's feature overrides
-- write audit before/after
-
-### `resetFeatureOverrides`
-
-Admin-only.
-
-Input:
-
-```ts
-{ roleKey: string, featureKeys?: string[] }
-```
-
-Delete selected overrides (or all overrides for the role) so those features inherit the parent module again. Audit the operation.
-
-### `assignUserRole`
-
-Keep current transactional behavior and audit.
-
-## 7. Server authorization
-
-Extend the current API authorization architecture, not a second system.
-
-Add an explicit feature-aware helper, e.g.:
-
-```ts
-authorizeTasFeatureRequest(user, {
-  module,
-  feature,
-  action,
-  input,
-})
-```
-
-or enhance `authorizeTasApiRequest` to resolve the feature deterministically.
-
-### Required precedence
-
-1. authenticated user
-2. module/action grant
-3. feature/action effective grant
-4. existing data-scope request protection
-5. resolver-specific business restrictions
-
-Resolver-specific restrictions remain stricter. Example: Excel Import Delete/Restore remains Admin-only regardless of `sales.excel_imports.delete`.
-
-### API mapping
-
-Create an explicit mapping for major TAS/Automotive procedures rather than depending only on fuzzy substring inference.
-
-At minimum map procedures for:
-
-- dashboard
-- conversations/messages
-- leads/sales pipeline
+- dashboard home
+- leads / lead profile
 - Excel Imports
 - Competitive Queues
+- sales overview
 - quotations
 - tasks
 - test drives
 - trade-ins
 - finance applications
-- catalog/inventory/brands
-- service bookings
-- after-sales parts/feedback
+- conversations
+- catalog / inventory / brands
+- finance
+- service
+- after-sales
+- operations
 - reports
 - marketing
 - shipping
 - WhatsApp/integrations
-- TAS admin/roles/users/settings
+- admin overview
+- users
+- roles & permissions
+- audit log
+- system settings
 
-Fallback fuzzy inference may remain for backward compatibility but unknown user-facing TAS mutations must be logged/fail-closed where practical.
+## 5. Effective feature permission
 
-## 8. Client permission API
-
-Extend `client/src/lib/tasRbac.ts` with feature-aware helpers.
-
-Required APIs:
+Single server source of truth:
 
 ```ts
-canModule(module, action)
-canFeature(featureKey, action)
-featureGrant(featureKey)
-scope(module)
+moduleGrant = effectiveModuleGrant(role, feature.module)
+override = featureOverride(role, feature.key)
+effectiveAction = moduleGrant[action] && (override ? override[action] : true)
 ```
 
-Maintain backward compatibility with existing `can(module, action)` call sites until migrated.
+Rules:
 
-## 9. Reusable UI guards
+- feature override may narrow but never widen parent
+- parent `view=false` forces every child action false
+- feature `dataScope` is not introduced in Phase 2; inherit parent module scope
+- Admin has full operational access and cannot be weakened by ordinary RBAC editing
 
-Create reusable guards, preferably:
+## 6. Admin protection
+
+Normal Admin must:
+
+- be able to access `/tas/admin/permissions`
+- create/edit/deactivate non-Admin roles
+- set module and feature permissions
+- assign roles to users
+- reset feature overrides to inheritance
+- view RBAC audit data
+
+Protect the Admin role itself from accidental weakening/deletion through the standard role editor.
+
+This protection is for **Admin**, not a requirement that the operator be SuperAdmin.
+
+## 7. RBAC router extensions
+
+Extend `tasRbacRouter`:
+
+### `catalog`
+Return modules, actions, data scopes, feature catalog.
+
+### `me`
+Return normalized role, module permissions, effective feature permissions.
+
+### `listRoles`
+Admin-accessible. Return role metadata, module matrix, raw feature overrides, effective feature permissions.
+
+### `saveRole`
+Admin-accessible. Save module + feature permissions transactionally and audit before/after. Do not permit weakening/deleting the protected Admin role through this operation.
+
+### `resetFeatureOverrides`
+Admin-accessible. Delete selected/all feature override rows so features inherit parent again. Audit it.
+
+### `assignUserRole`
+Admin-accessible. Preserve transactional behavior and audit.
+
+## 8. Server feature authorization
+
+Extend the current authorization architecture, do not build a second engine.
+
+Required precedence:
+
+1. authenticated user
+2. module/action permission
+3. feature/action permission
+4. existing request/data-scope checks
+5. stricter resolver-specific business rule
+
+Create deterministic mapping for major TAS/Automotive procedures. Fuzzy inference may remain only as compatibility fallback.
+
+Important: Excel Imports Delete/Restore stays Admin-only at resolver/router level regardless of generic feature permissions.
+
+## 9. Excel Imports non-regression
+
+Phase 2 MUST NOT alter the existing Excel import execution pipeline.
+
+Do not change:
+
+- file parsing
+- upload flow
+- row processing
+- importBatch linkage logic
+- queue creation/processing
+- lead creation semantics
+- lifecycle implementation from V1 except where a permission guard wraps an existing operation
+
+Only add permission visibility/action enforcement around the already implemented feature.
+
+## 10. Client permission API
+
+Extend `client/src/lib/tasRbac.ts` with:
+
+- `canModule(module, action)`
+- `canFeature(featureKey, action)`
+- `featureGrant(featureKey)`
+- `scope(module)`
+
+Keep current `can(module, action)` backward-compatible.
+
+## 11. Reusable UI guards
+
+Create/extend centralized guards such as:
 
 - `TASFeatureGuard`
 - `TASActionGuard`
 
-`TASFeatureGuard` controls page/section access.
+Use them for route/page access, sidebar, tabs, buttons, menus.
 
-`TASActionGuard` controls buttons/menu items without duplicating role checks.
+Do not use raw role-name checks where a permission can express the rule, except explicit Admin-only business rules such as Excel Import Delete/Restore.
 
-Support a `fallback={null}` mode for simply hiding controls.
+## 12. Route/navigation enforcement
+
+Direct URL and sidebar visibility must agree.
 
 Examples:
 
-```tsx
-<TASActionGuard feature="sales.leads" action="assign">
-  <Button>Assign</Button>
-</TASActionGuard>
-```
-
-```tsx
-<TASFeatureGuard feature="sales.excel_imports">
-  <ExcelImports />
-</TASFeatureGuard>
-```
-
-## 10. Route enforcement
-
-Map TAS/Automotive routes to feature keys.
-
-Required examples:
-
 - `/excel-imports` -> `sales.excel_imports.view`
 - `/competitive-queues` -> `sales.competitive_queues.view`
-- `/leads` and `/leads/:id` -> `sales.leads.view` / `sales.lead_profile.view`
+- `/leads` -> `sales.leads.view`
+- `/leads/:id` -> `sales.lead_profile.view`
 - `/tas/sales` -> `sales.overview.view`
-- `/tas/admin/permissions` -> protected Admin + `admin.roles_permissions.view`
+- `/tas/admin/permissions` -> normal Admin-accessible Roles & Permissions management
 
-Direct URL access must not bypass the sidebar permission.
+Map all relevant current routes.
 
-## 11. Sidebar/navigation
+## 13. Action-level controls
 
-Inventory `CRMLayout.tsx` and any TAS navigation components.
+Apply feature/action checks to major controls without changing underlying workflow logic.
 
-Every TAS/Automotive item must have a feature key and be hidden when `canFeature(feature, "view")` is false.
+Priority:
 
-Do not hide unrelated legacy non-TAS navigation unless the route belongs to this RBAC domain.
+- Leads: create/edit/delete/export/assign
+- Excel Imports: view/edit/archive; Delete/Restore Admin-only
+- Competitive Queues: create/configure/assign
+- Quotations: create/edit/delete/approve/export where applicable
+- Tasks/Test Drives/Trade-ins/Finance applications: relevant create/edit/assign/approve
+- Catalog: create/edit/archive/inventory/brands
+- Reports: export
+- Integrations: customer-operational settings actions
 
-## 12. Tabs and actions
+## 14. Roles & Permissions UI
 
-Inventory the main TAS screens and apply guards to significant tabs and controls.
-
-Priority actions:
-
-### Leads
-- create
-- edit
-- delete
-- export
-- assign/reassign
-
-### Excel Imports
-- view
-- edit
-- archive
-- delete/restore remains Admin-only
-
-### Competitive Queues
-- create/configure
-- assign/update members
-
-### Quotations
-- create
-- edit
-- delete
-- approve where applicable
-- export/share if the action maps to export
-
-### Tasks / Test Drives / Trade-ins / Finance applications
-- create
-- edit
-- assign/approve where applicable
-
-### Catalog
-- create/edit/archive vehicles
-- inventory edits
-- brand edits
-
-### Reports
-- view/export
-
-### Integrations
-- view/edit connection settings
-
-Do not reduce server security to match the UI. The server is authoritative.
-
-## 13. Roles & Permissions UI redesign
-
-Upgrade the existing page; do not build a separate admin screen.
+Upgrade the existing page only.
 
 Required UX:
 
-- left panel role search/list
+- Admin can open and use it
+- role search/list
 - New Role
 - role metadata
 - module cards/accordion
-- module-level action toggles
-- feature rows nested under module
-- each feature row: Inherit/Custom badge
+- module action toggles
+- feature rows grouped under parent module
+- Inherit / Custom indicator
 - per-feature action toggles
-- bulk actions per module:
-  - Full Access
-  - View Only
-  - No Access
-  - Reset Features to Inherit
-- data scope selector stays at module level
+- module bulk actions: Full Access, View Only, No Access, Reset Features to Inherit
+- module-level data scope selector
 - effective permission preview
-- users assigned to selected role
-- user role assignment section
-- save button with dirty-state indicator
-- before-navigation/browser unload warning when dirty
-- protected Admin read-only with clear badge
-- bilingual Arabic/English + RTL
+- assigned users / role assignment
+- dirty-state indicator
+- unsaved-change warning
+- Admin role displayed protected/read-only where necessary to prevent accidental lockout
+- Arabic/English + RTL
 
-## 14. Audit UI
+## 15. SuperAdmin technical boundary
 
-If the existing audit UI can display RBAC audit rows cleanly, add friendly labels for the new actions. Do not create another audit log page.
+Do not move any normal Admin feature under SuperAdmin.
 
-## 15. Backward compatibility
+If the app currently contains developer-only pages/settings, keep them separate and document them. Examples could include vendor developer tools, code/deployment controls, GitHub/source-control controls, or low-level developer API diagnostics. Only those may be SuperAdmin-only.
+
+Do not add GitHub push behavior to this patch.
+
+## 16. Audit
+
+Use `tas_rbac_audit_log` for:
+
+- role.create
+- role.update
+- role.delete/deactivate
+- role.module_permissions.update
+- role.feature_permissions.update
+- role.feature_permissions.reset
+- user.role.assign
+
+Store meaningful before/after JSON.
+
+## 17. Phase boundary
+
+Do not implement full record-level `dataScope` filtering across Leads/Deals/Clients here. That is Phase 3. Preserve existing request-scope behavior.
+
+## 18. Backward compatibility
 
 Critical:
 
-- Existing roles without feature override rows inherit module grants, so the application does not suddenly disappear after migration.
-- Existing custom roles remain valid.
-- Existing module-only UI guards continue working during migration.
-- Do not change Data Scope semantics in this phase.
-- Do not regress Excel Imports V1 authorization.
+- existing roles with no feature overrides behave exactly as before
+- existing custom roles remain valid
+- Admin retains normal operational administration
+- no normal operational feature becomes SuperAdmin-only
+- Excel Imports V1 workflow is unchanged
+- module-only guards continue to function during migration
 
-## 16. Tests / contracts
+## 19. Required verification
 
-Add focused tests or executable contracts for:
+Verify/test at least:
 
-1. no feature override -> inherits module permission
-2. feature override can deny parent-granted action
-3. feature override cannot grant parent-denied action
-4. module view false forces child feature view false
-5. Admin always full
-6. protected Admin cannot be weakened/deleted
-7. custom role persists feature overrides
-8. reset feature -> inherits again
-9. sidebar feature visibility agrees with route guard
-10. denied direct route does not render protected page
-11. denied API request returns FORBIDDEN
-12. allowed feature API request continues to resolver
-13. Excel Imports non-admin delete/restore remain forbidden
-14. role change invalidates/refetches effective permissions
-15. feature catalog server/client parity if mirrored
-16. migration leaves existing roles working via inheritance
-17. build/typecheck gates
+1. no override -> inherit parent
+2. override can deny parent-granted action
+3. override cannot grant parent-denied action
+4. module view false forces child false
+5. Admin can access and manage Roles & Permissions
+6. Admin cannot accidentally delete/weaken its own protected base role
+7. SuperAdmin, if present, is not required for normal Admin tasks
+8. custom role feature overrides persist
+9. reset feature returns to inherit
+10. sidebar and direct route agree
+11. denied API returns FORBIDDEN
+12. allowed API continues
+13. Excel Imports non-admin Delete/Restore remain forbidden
+14. Excel import upload/processing code has no functional changes from Phase 2
+15. existing roles work without override rows
+16. build/typecheck gates
 
-## 17. Completion report
+Do not claim unexecuted tests passed.
 
-OpenHands must return:
+## 20. Completion report
+
+Return:
 
 - summary
 - exact changed files
@@ -411,12 +340,13 @@ OpenHands must return:
 - feature catalog count
 - routes mapped count
 - server procedures mapped count
-- tests actually run + results
+- confirmation normal Admin manages Roles & Permissions
+- confirmation SuperAdmin is only technical/developer scope if present
+- confirmation Excel Import execution flow was not changed
+- tests actually executed + results
 - typecheck status
 - build status
 - `git diff --stat`
 - `git status --short`
 - branch + HEAD
 - explicit confirmation no push was performed
-
-Never claim unexecuted tests as passing.
