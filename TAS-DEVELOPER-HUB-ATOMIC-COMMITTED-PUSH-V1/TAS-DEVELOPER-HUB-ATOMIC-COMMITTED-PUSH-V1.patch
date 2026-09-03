@@ -1,0 +1,279 @@
+diff --git a/server/services/developerHubGitHubAdvancedSync.ts b/server/services/developerHubGitHubAdvancedSync.ts
+--- a/server/services/developerHubGitHubAdvancedSync.ts
++++ b/server/services/developerHubGitHubAdvancedSync.ts
+@@ -92,4 +92,40 @@ export function decideGitHubSyncPlan(input: GitHubSyncPlanInput): GitHubSyncPlan
+   return { syncState: "both_changes", expectedAction: "safe_merge_and_push", blockedReason: null };
+ }
+ 
++export type AtomicCommittedHeadDecision =
++  | { mode: "none"; reason: null }
++  | { mode: "push_local_head"; reason: null }
++  | { mode: "blocked"; reason: string };
++
++export function decideAtomicCommittedHead(input: {
++  atomicWorkspaceIsolation: boolean;
++  remoteExists: boolean;
++  localAhead: number;
++  remoteAhead: number;
++  historiesRelated: boolean;
++  activeCandidateCompatibleWithLocalHead: boolean;
++}): AtomicCommittedHeadDecision {
++  if (!input.atomicWorkspaceIsolation || !input.remoteExists || input.localAhead <= 0) {
++    return { mode: "none", reason: null };
++  }
++  if (!input.historiesRelated) {
++    return {
++      mode: "blocked",
++      reason: "The local TAS branch and selected GitHub branch have unrelated histories.",
++    };
++  }
++  if (input.remoteAhead > 0) {
++    return {
++      mode: "blocked",
++      reason: "Atomic Developer Hub detected both local and GitHub commits. Review and resolve both directions before pushing.",
++    };
++  }
++  if (!input.activeCandidateCompatibleWithLocalHead) {
++    return {
++      mode: "blocked",
++      reason: "DUAL_SOURCE_DIVERGENCE: active release source contains changes that do not match the committed local HEAD.",
++    };
++  }
++  return { mode: "push_local_head", reason: null };
++}
++
+ export function createAdvancedSyncFingerprint(input: Record<string, unknown>) {
+   const stable = Object.keys(input)
+     .sort()
+diff --git a/server/routes/developerHub.ts b/server/routes/developerHub.ts
+--- a/server/routes/developerHub.ts
++++ b/server/routes/developerHub.ts
+@@ -14,6 +14,7 @@ import {
+   DEFAULT_APP_DEPLOY_ROOT,
+   resolveActiveReleasePaths,
+ } from "../deploymentPaths";
+ import {
+   createAdvancedSyncFingerprint,
++  decideAtomicCommittedHead,
+   decideGitHubSyncPlan,
+   normalizeGitHubSyncAction,
+   type GitHubSyncAction,
+@@ -5680,14 +5681,13 @@
+     let localAhead = 0;
+     let remoteAhead = 0;
+-    if (remoteExists && !ATOMIC_WORKSPACE_ISOLATION) {
++    if (remoteExists) {
+       const counts = await runGit(["rev-list", "--left-right", "--count", `HEAD...${remoteRef}`], auth.env)
+         .then(({ stdout }) => stdout.trim().split(/\s+/).map((value) => Number(value) || 0));
+       localAhead = counts[0] || 0;
+       remoteAhead = counts[1] || 0;
+     }
+-    const historiesRelated = ATOMIC_WORKSPACE_ISOLATION
+-      || !remoteExists
++    const historiesRelated = !remoteExists
+       || localSha === remoteSha
+       || await runGit(["merge-base", "HEAD", remoteRef], auth.env)
+         .then(({ stdout }) => Boolean(stdout.trim()))
+@@ -5695,27 +5695,60 @@
+-    const candidateSnapshot = await createWorkingTreeCandidateTree(auth.env);
+-    const candidateTree = candidateSnapshot.treeSha;
++    const candidateSnapshot = await createWorkingTreeCandidateTree(auth.env);
++    const activeCandidateTree = candidateSnapshot.treeSha;
++    let candidateTree = activeCandidateTree;
+     const remoteTree = remoteExists
+       ? await runGit(["rev-parse", `${remoteRef}^{tree}`], auth.env).then(({ stdout }) => stdout.trim())
+       : "";
++    const localHeadTree = await runGit(["rev-parse", "HEAD^{tree}"], auth.env)
++      .then(({ stdout }) => stdout.trim());
++
++    const activeCandidateChanges = ATOMIC_WORKSPACE_ISOLATION && remoteExists
++      ? await runGit(["diff", "--name-status", "-z", remoteRef, activeCandidateTree], auth.env)
++        .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"))
++        .catch(() => [])
++      : [];
++    const activeCandidatePaths = Array.from(new Set(activeCandidateChanges.map((entry) => entry.path)));
++    const activeCandidateCompatibleWithLocalHead =
++      !ATOMIC_WORKSPACE_ISOLATION
++      || !remoteExists
++      || activeCandidatePaths.length === 0
++      || (
++        activeCandidatePaths.length <= 500
++        && await runGit(
++          ["diff", "--quiet", activeCandidateTree, localHeadTree, "--", ...activeCandidatePaths],
++          auth.env,
++        ).then(() => true).catch(() => false)
++      );
++    const atomicCommittedHead = decideAtomicCommittedHead({
++      atomicWorkspaceIsolation: ATOMIC_WORKSPACE_ISOLATION,
++      remoteExists,
++      localAhead,
++      remoteAhead,
++      historiesRelated,
++      activeCandidateCompatibleWithLocalHead,
++    });
++    if (atomicCommittedHead.mode === "push_local_head") candidateTree = localHeadTree;
++
+     const atomicCandidateCommit = ATOMIC_WORKSPACE_ISOLATION && !remoteExists
+       ? await createVirtualCandidateCommit(candidateTree, "", auth.env)
+       : "";
+-    const workingChanges = ATOMIC_WORKSPACE_ISOLATION
+-      ? remoteExists
+-        ? await runGit(["diff", "--name-status", "-z", remoteRef, candidateTree], auth.env)
+-          .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"))
+-        : await runGit(["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", atomicCandidateCommit], auth.env)
+-          .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"))
+-      : await runGit(["diff", "--name-status", "-z", "HEAD", candidateTree], auth.env)
+-        .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"));
+-    const localCommitted = !ATOMIC_WORKSPACE_ISOLATION && remoteExists && localAhead > 0
++    const workingChanges = atomicCommittedHead.mode === "push_local_head"
++      ? []
++      : ATOMIC_WORKSPACE_ISOLATION
++        ? remoteExists
++          ? await runGit(["diff", "--name-status", "-z", remoteRef, candidateTree], auth.env)
++            .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"))
++          : await runGit(["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", atomicCandidateCommit], auth.env)
++            .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"))
++        : await runGit(["diff", "--name-status", "-z", "HEAD", candidateTree], auth.env)
++          .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"));
++    const localCommitted = remoteExists && localAhead > 0
+       ? await runGit(["diff", "--name-status", "-z", `${remoteRef}...HEAD`], auth.env)
+         .then(({ stdout }) => parseGitNameStatusZ(stdout, "local"))
+         .catch(() => [])
+       : [];
+-    const remoteChanges = !ATOMIC_WORKSPACE_ISOLATION && remoteExists && remoteAhead > 0
++    const remoteChanges = remoteExists && remoteAhead > 0
+       ? await runGit(["diff", "--name-status", "-z", `HEAD...${remoteRef}`], auth.env)
+         .then(({ stdout }) => parseGitNameStatusZ(stdout, "remote"))
+         .catch(() => [])
+@@ -5748,6 +5781,7 @@
+     }
+     const atomicWorkspaceChanged = ATOMIC_WORKSPACE_ISOLATION
++      && atomicCommittedHead.mode !== "push_local_head"
+       && (!remoteExists || remoteTree !== candidateTree);
+     const cleanSnapshotRequired = action !== "pull"
+       && (!remoteExists || atomicWorkspaceChanged);
+@@ -5772,19 +5806,31 @@
+-    if (remoteExists && !ATOMIC_WORKSPACE_ISOLATION && !historiesRelated) {
++    if (remoteExists && !historiesRelated) {
+       blocked.push({
+         path: "(Git history)",
+         reason: "the local TAS project and selected GitHub branch have unrelated histories; use an empty repository or resolve this manually",
+       });
+     }
+-    if (!ATOMIC_WORKSPACE_ISOLATION && action !== "pull" && localAhead > 0) {
++    if (action !== "pull" && localAhead > 0) {
+       blocked.push(...await scanLocalCommitHistory(remoteRef, true, auth.env));
+     }
++    if (atomicCommittedHead.mode === "blocked") {
++      blocked.push({
++        path: "(Developer Hub source)",
++        reason: atomicCommittedHead.reason,
++      });
++    }
+     const uniqueBlocked = Array.from(
+       new Map(blocked.map((item) => [`${item.path}:${item.reason}`, item])).values(),
+     );
+-    const plan = cleanSnapshotRequired
+-      ? {
+-          syncState: "history_cleanup" as const,
+-          expectedAction: "clean_snapshot_and_push" as const,
+-          blockedReason: null,
+-        }
+-      : decideGitHubSyncPlan({
++    const plan = atomicCommittedHead.mode === "blocked"
++      ? {
++          syncState: "conflict" as const,
++          expectedAction: "blocked" as const,
++          blockedReason: atomicCommittedHead.reason,
++        }
++      : cleanSnapshotRequired
++        ? {
++            syncState: "history_cleanup" as const,
++            expectedAction: "clean_snapshot_and_push" as const,
++            blockedReason: null,
++          }
++        : decideGitHubSyncPlan({
+           action,
+           dirty: workingChanges.length > 0,
+           localAhead,
+diff --git a/server/services/developerHubGitHubAdvancedSync.test.ts b/server/services/developerHubGitHubAdvancedSync.test.ts
+new file mode 100644
+--- /dev/null
++++ b/server/services/developerHubGitHubAdvancedSync.test.ts
+@@ -0,0 +1,67 @@
++import { describe, expect, it } from "vitest";
++import {
++  decideAtomicCommittedHead,
++  decideGitHubSyncPlan,
++} from "./developerHubGitHubAdvancedSync";
++
++describe("Developer Hub atomic committed HEAD", () => {
++  it("pushes the committed local HEAD when atomic active source is compatible", () => {
++    expect(decideAtomicCommittedHead({
++      atomicWorkspaceIsolation: true,
++      remoteExists: true,
++      localAhead: 1,
++      remoteAhead: 0,
++      historiesRelated: true,
++      activeCandidateCompatibleWithLocalHead: true,
++    })).toEqual({ mode: "push_local_head", reason: null });
++  });
++
++  it("blocks atomic both-ahead state", () => {
++    const result = decideAtomicCommittedHead({
++      atomicWorkspaceIsolation: true,
++      remoteExists: true,
++      localAhead: 1,
++      remoteAhead: 1,
++      historiesRelated: true,
++      activeCandidateCompatibleWithLocalHead: true,
++    });
++    expect(result.mode).toBe("blocked");
++  });
++
++  it("blocks incompatible active release source", () => {
++    const result = decideAtomicCommittedHead({
++      atomicWorkspaceIsolation: true,
++      remoteExists: true,
++      localAhead: 1,
++      remoteAhead: 0,
++      historiesRelated: true,
++      activeCandidateCompatibleWithLocalHead: false,
++    });
++    expect(result.mode).toBe("blocked");
++    if (result.mode === "blocked") expect(result.reason).toContain("DUAL_SOURCE_DIVERGENCE");
++  });
++
++  it("does nothing when local HEAD is not ahead", () => {
++    expect(decideAtomicCommittedHead({
++      atomicWorkspaceIsolation: true,
++      remoteExists: true,
++      localAhead: 0,
++      remoteAhead: 0,
++      historiesRelated: true,
++      activeCandidateCompatibleWithLocalHead: true,
++    })).toEqual({ mode: "none", reason: null });
++  });
++
++  it("does nothing outside atomic isolation", () => {
++    expect(decideAtomicCommittedHead({
++      atomicWorkspaceIsolation: false,
++      remoteExists: true,
++      localAhead: 2,
++      remoteAhead: 0,
++      historiesRelated: true,
++      activeCandidateCompatibleWithLocalHead: true,
++    })).toEqual({ mode: "none", reason: null });
++  });
++
++  it("keeps the existing push planner behavior for committed local commits", () => {
++    expect(decideGitHubSyncPlan({
++      action: "push",
++      dirty: false,
++      localAhead: 1,
++      remoteAhead: 0,
++      remoteExists: true,
++      branchMatches: true,
++    }).expectedAction).toBe("push");
++  });
++});
