@@ -1,8 +1,8 @@
 diff --git a/server/services/developerHubGitHubAdvancedSync.ts b/server/services/developerHubGitHubAdvancedSync.ts
 --- a/server/services/developerHubGitHubAdvancedSync.ts
 +++ b/server/services/developerHubGitHubAdvancedSync.ts
-@@ -92,4 +92,40 @@ export function decideGitHubSyncPlan(input: GitHubSyncPlanInput): GitHubSyncPlan
-   return { syncState: "both_changes", expectedAction: "safe_merge_and_push", blockedReason: null };
+@@ -1,4 +1,40 @@
+   return { syncState, expectedAction: "safe_merge_and_push", blockedReason: null };
  }
  
 +export type AtomicCommittedHeadDecision =
@@ -43,22 +43,18 @@ diff --git a/server/services/developerHubGitHubAdvancedSync.ts b/server/services
 +}
 +
  export function createAdvancedSyncFingerprint(input: Record<string, unknown>) {
-   const stable = Object.keys(input)
-     .sort()
 diff --git a/server/routes/developerHub.ts b/server/routes/developerHub.ts
 --- a/server/routes/developerHub.ts
 +++ b/server/routes/developerHub.ts
-@@ -14,6 +14,7 @@ import {
-   DEFAULT_APP_DEPLOY_ROOT,
-   resolveActiveReleasePaths,
- } from "../deploymentPaths";
+@@ -1,6 +1,7 @@
  import {
    createAdvancedSyncFingerprint,
 +  decideAtomicCommittedHead,
    decideGitHubSyncPlan,
    normalizeGitHubSyncAction,
    type GitHubSyncAction,
-@@ -5680,14 +5681,13 @@
+ } from "../services/developerHubGitHubAdvancedSync";
+@@ -1,14 +1,13 @@
      let localAhead = 0;
      let remoteAhead = 0;
 -    if (remoteExists && !ATOMIC_WORKSPACE_ISOLATION) {
@@ -74,10 +70,10 @@ diff --git a/server/routes/developerHub.ts b/server/routes/developerHub.ts
        || localSha === remoteSha
        || await runGit(["merge-base", "HEAD", remoteRef], auth.env)
          .then(({ stdout }) => Boolean(stdout.trim()))
-@@ -5695,27 +5695,60 @@
--    const candidateSnapshot = await createWorkingTreeCandidateTree(auth.env);
+         .catch(() => false);
+@@ -1,27 +1,60 @@
+     const candidateSnapshot = await createWorkingTreeCandidateTree(auth.env);
 -    const candidateTree = candidateSnapshot.treeSha;
-+    const candidateSnapshot = await createWorkingTreeCandidateTree(auth.env);
 +    const activeCandidateTree = candidateSnapshot.treeSha;
 +    let candidateTree = activeCandidateTree;
      const remoteTree = remoteExists
@@ -145,14 +141,15 @@ diff --git a/server/routes/developerHub.ts b/server/routes/developerHub.ts
        ? await runGit(["diff", "--name-status", "-z", `HEAD...${remoteRef}`], auth.env)
          .then(({ stdout }) => parseGitNameStatusZ(stdout, "remote"))
          .catch(() => [])
-@@ -5748,6 +5781,7 @@
-     }
+       : [];
+     const files = dedupeChanges([...workingChanges, ...localCommitted, ...remoteChanges]);
+@@ -1,4 +1,5 @@
      const atomicWorkspaceChanged = ATOMIC_WORKSPACE_ISOLATION
 +      && atomicCommittedHead.mode !== "push_local_head"
        && (!remoteExists || remoteTree !== candidateTree);
      const cleanSnapshotRequired = action !== "pull"
        && (!remoteExists || atomicWorkspaceChanged);
-@@ -5772,19 +5806,31 @@
+@@ -1,19 +1,31 @@
 -    if (remoteExists && !ATOMIC_WORKSPACE_ISOLATION && !historiesRelated) {
 +    if (remoteExists && !historiesRelated) {
        blocked.push({
@@ -200,7 +197,7 @@ diff --git a/server/services/developerHubGitHubAdvancedSync.test.ts b/server/ser
 new file mode 100644
 --- /dev/null
 +++ b/server/services/developerHubGitHubAdvancedSync.test.ts
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,76 @@
 +import { describe, expect, it } from "vitest";
 +import {
 +  decideAtomicCommittedHead,
