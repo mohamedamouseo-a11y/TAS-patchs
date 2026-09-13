@@ -1,0 +1,222 @@
+diff --git a/client/src/pages/AdminSettings.tsx b/client/src/pages/AdminSettings.tsx
+--- a/client/src/pages/AdminSettings.tsx
++++ b/client/src/pages/AdminSettings.tsx
+@@ -68,2 +68,14 @@
+ 
++type CampaignPlatform = "Messages" | "LeadForm" | "Meta" | "Google" | "Snapchat" | "TikTok" | "Other";
++
++type CampaignFormValues = {
++  name: string;
++  platform: CampaignPlatform;
++  platformOther: string;
++  notes: string;
++  roundRobinEnabled: boolean;
++};
++
++const CAMPAIGN_PLATFORMS: CampaignPlatform[] = ["Messages", "LeadForm", "Meta", "Google", "Snapchat", "TikTok", "Other"];
++
+ function normalizeSuperAdminValue(value: unknown) {
+@@ -370,4 +370,12 @@
+-  const { register: campReg, handleSubmit: campSubmit, reset: campReset, setValue: campSetVal } = useForm({
+-    defaultValues: { name: "", platform: "Meta" as const, notes: "", roundRobinEnabled: false },
++  const {
++    register: campReg,
++    handleSubmit: campSubmit,
++    reset: campReset,
++    setValue: campSetVal,
++    watch: campWatch,
++    formState: { errors: campErrors },
++  } = useForm<CampaignFormValues>({
++    defaultValues: { name: "", platform: "Meta", platformOther: "", notes: "", roundRobinEnabled: false },
+   });
++  const selectedCampaignPlatform = campWatch("platform");
+ 
+@@ -691,3 +691,5 @@
+                         <td className="px-4 py-3">
+-                          <Badge variant="secondary" className="text-xs">{camp.platform}</Badge>
++                          <Badge variant="secondary" className="text-xs">
++                            {camp.platform === "Other" && camp.platformOther ? camp.platformOther : camp.platform}
++                          </Badge>
+                         </td>
+@@ -1409,2 +1409,10 @@
+-          <form onSubmit={campSubmit((data) => createCampaign.mutate(data))} className="space-y-4">
++          <form
++            onSubmit={campSubmit((data) =>
++              createCampaign.mutate({
++                ...data,
++                platformOther: data.platform === "Other" ? data.platformOther.trim() : undefined,
++              })
++            )}
++            className="space-y-4"
++          >
+             <div className="flex flex-col gap-1.5">
+@@ -1415,6 +1423,14 @@
+               <Label>{t("platform")}</Label>
+-              <Select defaultValue="Meta" onValueChange={(v) => campSetVal("platform", v as any)}>
++              <Select
++                defaultValue="Meta"
++                onValueChange={(v) => {
++                  campSetVal("platform", v as CampaignPlatform, { shouldDirty: true, shouldValidate: true });
++                  if (v !== "Other") {
++                    campSetVal("platformOther", "", { shouldDirty: true, shouldValidate: true });
++                  }
++                }}
++              >
+                 <SelectTrigger className="h-10 rounded-xl border-zinc-200 bg-zinc-50"><SelectValue /></SelectTrigger>
+                 <SelectContent>
+-                  {["Messages", "LeadForm", "Meta", "Google", "Snapchat", "TikTok", "Other"].map((p) => (
++                  {CAMPAIGN_PLATFORMS.map((p) => (
+                     <SelectItem key={p} value={p}>{p}</SelectItem>
+@@ -1424,2 +1440,23 @@
+             </div>
++            {selectedCampaignPlatform === "Other" && (
++              <div className="flex flex-col gap-1.5">
++                <Label>{isRTL ? "اسم المنصة الأخرى" : "Other platform name"}</Label>
++                <Input
++                  {...campReg("platformOther", {
++                    maxLength: 255,
++                    validate: (value) =>
++                      selectedCampaignPlatform !== "Other" ||
++                      Boolean(value.trim()) ||
++                      (isRTL ? "اكتب اسم المنصة" : "Enter the platform name"),
++                  })}
++                  className="h-10 rounded-xl border-zinc-200 bg-zinc-50 text-sm"
++                  placeholder={isRTL ? "مثال: X أو Telegram" : "e.g. X or Telegram"}
++                  maxLength={255}
++                  autoFocus
++                />
++                {campErrors.platformOther?.message && (
++                  <p className="text-xs text-destructive">{String(campErrors.platformOther.message)}</p>
++                )}
++              </div>
++            )}
+             <div className="flex items-center gap-2">
+diff --git a/drizzle/schema.ts b/drizzle/schema.ts
+--- a/drizzle/schema.ts
++++ b/drizzle/schema.ts
+@@ -67,2 +67,3 @@
+ 	platform: mysqlEnum(['Messages','LeadForm','Meta','Google','Snapchat','TikTok','LinkedIn','Other']).default('Meta').notNull(),
++	platformOther: varchar({ length: 255 }),
+ 	startDate: timestamp({ mode: 'string' }),
+diff --git a/server/routers.ts b/server/routers.ts
+--- a/server/routers.ts
++++ b/server/routers.ts
+@@ -1889,2 +1889,3 @@
+           platform: z.enum(["Messages", "LeadForm", "Meta", "Google", "Snapchat", "TikTok", "Other"]).default("Meta"),
++          platformOther: z.string().trim().max(255).optional(),
+           startDate: z.date().optional(),
+@@ -1893,5 +1894,18 @@
+           roundRobinEnabled: z.boolean().default(false),
++        }).superRefine((data, ctx) => {
++          if (data.platform === "Other" && !data.platformOther?.trim()) {
++            ctx.addIssue({
++              code: "custom",
++              path: ["platformOther"],
++              message: "Custom platform name is required when platform is Other",
++            });
++          }
+         })
+       )
+-      .mutation(({ input }) => createCampaign(input as any)),
++      .mutation(({ input }) =>
++        createCampaign({
++          ...input,
++          platformOther: input.platform === "Other" ? input.platformOther?.trim() || null : null,
++        } as any)
++      ),
+ 
+@@ -1903,2 +1917,3 @@
+           platform: z.enum(["Messages", "LeadForm", "Meta", "Google", "Snapchat", "TikTok", "Other"]).optional(),
++          platformOther: z.string().trim().max(255).nullable().optional(),
+           notes: z.string().optional(),
+diff --git a/scripts/apply-campaign-other-platform-v1.ts b/scripts/apply-campaign-other-platform-v1.ts
+new file mode 100644
+--- /dev/null
++++ b/scripts/apply-campaign-other-platform-v1.ts
+@@ -0,0 +1,86 @@
++import path from "node:path";
++import { config as dotenvConfig } from "dotenv";
++import mysql from "mysql2/promise";
++
++dotenvConfig({ path: path.join(process.cwd(), ".env"), override: false });
++
++type Connection = mysql.Connection;
++
++async function tableExists(connection: Connection, tableName: string) {
++  const [rows] = await connection.query<any[]>(
++    `SELECT TABLE_NAME AS tableName
++     FROM INFORMATION_SCHEMA.TABLES
++     WHERE TABLE_SCHEMA = DATABASE()
++       AND TABLE_NAME = ?
++     LIMIT 1`,
++    [tableName],
++  );
++  return Boolean(rows?.[0]?.tableName);
++}
++
++async function columnExists(connection: Connection, tableName: string, columnName: string) {
++  const [rows] = await connection.query<any[]>(
++    `SELECT COLUMN_NAME AS columnName
++     FROM INFORMATION_SCHEMA.COLUMNS
++     WHERE TABLE_SCHEMA = DATABASE()
++       AND TABLE_NAME = ?
++       AND COLUMN_NAME = ?
++     LIMIT 1`,
++    [tableName, columnName],
++  );
++  return Boolean(rows?.[0]?.columnName);
++}
++
++async function main() {
++  const databaseUrl = process.env.DATABASE_URL;
++  if (!databaseUrl) throw new Error("DATABASE_URL is required");
++
++  const expectedDatabaseName = process.env.TAS_EXPECTED_DATABASE_NAME?.trim();
++  if (!expectedDatabaseName) {
++    throw new Error("TAS_EXPECTED_DATABASE_NAME is required for campaign schema reconciliation");
++  }
++
++  const apply = process.argv.includes("--apply");
++  const connection = await mysql.createConnection(databaseUrl);
++
++  try {
++    const [databaseRows] = await connection.query<any[]>("SELECT DATABASE() AS databaseName");
++    const actualDatabaseName = String(databaseRows?.[0]?.databaseName ?? "");
++    if (!actualDatabaseName || actualDatabaseName !== expectedDatabaseName) {
++      throw new Error(
++        `Database mismatch: expected ${expectedDatabaseName || "<empty>"} but connected to ${actualDatabaseName || "<none>"}`,
++      );
++    }
++
++    if (!(await tableExists(connection, "campaigns"))) {
++      throw new Error("campaigns table does not exist");
++    }
++
++    const exists = await columnExists(connection, "campaigns", "platformOther");
++    if (exists) {
++      console.log("[campaign-other-platform-v1] campaigns.platformOther already exists; no change required");
++      console.log(apply ? "TAS_CAMPAIGN_OTHER_PLATFORM_SCHEMA_APPLY=PASS" : "TAS_CAMPAIGN_OTHER_PLATFORM_SCHEMA_DRY_RUN=PASS");
++      return;
++    }
++
++    if (!apply) {
++      console.log("[campaign-other-platform-v1] dry-run: would add campaigns.platformOther VARCHAR(255) NULL");
++      console.log("TAS_CAMPAIGN_OTHER_PLATFORM_SCHEMA_DRY_RUN=PASS");
++      return;
++    }
++
++    await connection.query(
++      "ALTER TABLE campaigns ADD COLUMN platformOther VARCHAR(255) NULL AFTER platform",
++    );
++
++    console.log("[campaign-other-platform-v1] campaigns.platformOther added");
++    console.log("TAS_CAMPAIGN_OTHER_PLATFORM_SCHEMA_APPLY=PASS");
++  } finally {
++    await connection.end();
++  }
++}
++
++main().catch((error) => {
++  console.error("[campaign-other-platform-v1] migration failed", error);
++  process.exit(1);
++});
