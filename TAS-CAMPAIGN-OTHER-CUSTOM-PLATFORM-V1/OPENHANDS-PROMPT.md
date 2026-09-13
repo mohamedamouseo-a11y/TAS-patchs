@@ -7,9 +7,10 @@ Important rules:
 - Do NOT push.
 - Do NOT merge.
 - Do NOT open a PR.
-- Do NOT commit or modify `master`.
+- Do NOT modify or commit directly on `master`.
+- After verification, create one local commit on the feature branch only.
 - Do NOT run database DDL or the migration script with `--apply`.
-- I will review and push myself from Developer Hub.
+- I will review and push the local feature-branch commit myself from Developer Hub.
 
 Patch source:
 - Repository: `https://github.com/mohamedamouseo-a11y/TAS-patchs`
@@ -21,7 +22,7 @@ Patch source:
 Execution steps:
 
 1. Inspect the current TAS git status and current commit. If there are unrelated local changes, STOP and report them; do not overwrite them.
-2. Create/switch to local branch:
+2. Ensure the base is the current `master`, then create/switch to local branch:
    `fix/campaign-other-custom-platform-v1`
 3. Clone/fetch the patch repository into a temporary directory and checkout branch:
    `patch/campaign-other-custom-platform-v1`
@@ -41,8 +42,12 @@ Execution steps:
    - `pnpm check`
    - `git diff --check`
 9. Do not execute `scripts/apply-campaign-other-platform-v1.ts --apply`.
-10. Report:
+10. If both checks pass, create one local commit on `fix/campaign-other-custom-platform-v1` with commit message:
+    `fix(settings): allow custom campaign platform for Other`
+11. Do NOT push that commit. I will push it myself from Developer Hub.
+12. Report:
    - branch name
+   - commit SHA
    - changed files
    - `pnpm check` result
    - `git diff --check` result
