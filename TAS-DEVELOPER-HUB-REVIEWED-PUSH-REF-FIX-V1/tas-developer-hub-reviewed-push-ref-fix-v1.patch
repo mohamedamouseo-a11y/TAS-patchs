@@ -1,0 +1,142 @@
+diff --git a/server/routes/developerHub.ts b/server/routes/developerHub.ts
+--- a/server/routes/developerHub.ts
++++ b/server/routes/developerHub.ts
+@@ -2161,7 +2161,6 @@
+ 
+ type CleanSnapshotMutation = {
+   commitSha: string;
+-  recoveryRef: string;
+   rollback: () => Promise<void>;
+ };
+ 
+@@ -2169,54 +2168,42 @@
+   branch: string,
+   commitMessage: string,
+   candidateTree: string,
+-  oldHead: string,
+   remoteParent: string,
+   env: NodeJS.ProcessEnv,
+ ): Promise<CleanSnapshotMutation> {
+   validateGitBranch(branch);
+-  if (!/^[a-f0-9]{40,64}$/i.test(candidateTree) || !/^[a-f0-9]{40,64}$/i.test(oldHead)
++  if (!/^[a-f0-9]{40,64}$/i.test(candidateTree)
+     || (remoteParent && !/^[a-f0-9]{40,64}$/i.test(remoteParent))) {
+     throw new Error("Invalid clean snapshot review state.");
+   }
+-  const branchRef = `refs/heads/${branch}`;
+-  const recoveryRef = `refs/tas-developer-hub/recovery/${Date.now()}-${oldHead.slice(0, 12)}`;
+-  await runGit(["update-ref", recoveryRef, oldHead], env);
+-  let commitSha = "";
+-  try {
+-    const commitArgs = ["commit-tree", candidateTree];
+-    if (remoteParent) commitArgs.push("-p", remoteParent);
+-    commitArgs.push("-m", commitMessage);
+-    commitSha = await runGit(
+-      commitArgs,
+-      withDeveloperHubGitIdentity(env),
+-    ).then(({ stdout }) => stdout.trim());
+-    if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
+-      throw new Error("Unable to create the reviewed clean snapshot commit.");
+-    }
+-    await runGit(["update-ref", branchRef, commitSha, oldHead], env);
+-    await runGit(["reset", "--mixed", commitSha], env);
+-    const committedTree = await runGit(["rev-parse", "HEAD^{tree}"], env)
+-      .then(({ stdout }) => stdout.trim());
+-    if (committedTree !== candidateTree) {
+-      throw new Error("The clean snapshot commit differs from the reviewed source tree.");
+-    }
+-    return {
+-      commitSha,
+-      recoveryRef,
+-      async rollback() {
+-        await runGit(["update-ref", branchRef, oldHead, commitSha], env);
+-        await runGit(["reset", "--mixed", oldHead], env);
+-        await runGit(["update-ref", "-d", recoveryRef], env).catch(() => undefined);
+-      },
+-    };
+-  } catch (error) {
+-    if (commitSha) {
+-      await runGit(["update-ref", branchRef, oldHead, commitSha], env).catch(() => undefined);
+-      await runGit(["reset", "--mixed", oldHead], env).catch(() => undefined);
+-    }
+-    await runGit(["update-ref", "-d", recoveryRef], env).catch(() => undefined);
+-    throw error;
++
++  // Atomic releases are deployment snapshots, not Git branch worktrees.
++  // Build the reviewed commit object without moving HEAD or refs/heads/<branch>.
++  // The exact reviewed commit is pushed by SHA later.
++  const commitArgs = ["commit-tree", candidateTree];
++  if (remoteParent) commitArgs.push("-p", remoteParent);
++  commitArgs.push("-m", commitMessage);
++  const commitSha = await runGit(
++    commitArgs,
++    withDeveloperHubGitIdentity(env),
++  ).then(({ stdout }) => stdout.trim());
++  if (!/^[a-f0-9]{40,64}$/i.test(commitSha)) {
++    throw new Error("Unable to create the reviewed clean snapshot commit.");
+   }
++
++  const committedTree = await runGit(["rev-parse", `${commitSha}^{tree}`], env)
++    .then(({ stdout }) => stdout.trim());
++  if (committedTree !== candidateTree) {
++    throw new Error("The clean snapshot commit differs from the reviewed source tree.");
++  }
++
++  return {
++    commitSha,
++    async rollback() {
++      // No local branch/ref was mutated. The unreferenced commit object can be
++      // garbage-collected if the remote push never starts.
++    },
++  };
+ }
+ 
+ async function generateFallbackContextFile(outputFile: string) {
+@@ -3637,15 +3624,14 @@
+           state.githubBranch,
+           commitMessage,
+           preview.candidateTree,
+-          preview.localSha,
+           preview.remoteSha,
+           auth.env,
+         );
+         emit({
+           type: "log",
+-          level: "warning",
+-          message: `Old local history was excluded. Recovery ref: ${cleanSnapshotMutation.recoveryRef}`,
+-          messageAr: `تم استبعاد التاريخ المحلي القديم مع حفظ مرجع استعادة محلي: ${cleanSnapshotMutation.recoveryRef}`,
++          level: "info",
++          message: "Created the reviewed clean snapshot without mutating local branch refs.",
++          messageAr: "تم إنشاء النسخة النظيفة المراجعة دون تعديل مراجع الفروع المحلية.",
+         });
+       } else if (preview.expectedAction === "commit_and_push" || preview.expectedAction === "safe_merge_and_push") {
+         step(35, "Committing local changes", "جاري حفظ التغييرات المحلية");
+@@ -3668,9 +3654,10 @@
+       if (remoteHeadBeforePush !== preview.remoteSha) {
+         throw new Error("GitHub changed before push. Review again before continuing.");
+       }
+-      const pushSha = await runGit(["rev-parse", "HEAD"], auth.env).then(({ stdout }) => stdout.trim());
++      const pushSha = cleanSnapshotMutation?.commitSha
++        || await runGit(["rev-parse", "HEAD"], auth.env).then(({ stdout }) => stdout.trim());
+       if (!/^[a-f0-9]{40,64}$/i.test(pushSha)) throw new Error("Unable to identify the reviewed commit.");
+-      const pushTree = await runGit(["rev-parse", "HEAD^{tree}"], auth.env).then(({ stdout }) => stdout.trim());
++      const pushTree = await runGit(["rev-parse", `${pushSha}^{tree}`], auth.env).then(({ stdout }) => stdout.trim());
+       const expectedPushTree = preview.expectedAction === "safe_merge_and_push"
+         ? preview.mergeTree
+         : preview.candidateTree;
+@@ -3686,9 +3673,13 @@
+       expectedFinalSha = pushSha;
+     }
+ 
+-    const finalSha = await runGit(["rev-parse", "HEAD"], auth.env).then(({ stdout }) => stdout.trim());
++    const finalSha = preview.expectedAction === "clean_snapshot_and_push"
++      ? await readRemoteBranchHead(state.githubBranch, auth.env)
++      : await runGit(["rev-parse", "HEAD"], auth.env).then(({ stdout }) => stdout.trim());
+     if (finalSha !== expectedFinalSha) {
+-      throw new Error("The local Git branch changed before synchronization completed.");
++      throw new Error(preview.expectedAction === "clean_snapshot_and_push"
++        ? "GitHub did not retain the reviewed clean snapshot commit."
++        : "The local Git branch changed before synchronization completed.");
+     }
+     const syncAt = new Date().toISOString();
+     const syncBy = (user as any).email || "unknown";
