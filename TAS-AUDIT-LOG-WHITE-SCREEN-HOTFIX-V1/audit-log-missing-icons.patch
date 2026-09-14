@@ -1,0 +1,11 @@
+diff --git a/client/src/pages/AuditLogPage.tsx b/client/src/pages/AuditLogPage.tsx
+--- a/client/src/pages/AuditLogPage.tsx
++++ b/client/src/pages/AuditLogPage.tsx
+@@
+   Search,
+   ShieldAlert,
++  SlidersHorizontal,
+   Trash2,
+   Undo2,
++  UserPlus,
+ } from "lucide-react";
