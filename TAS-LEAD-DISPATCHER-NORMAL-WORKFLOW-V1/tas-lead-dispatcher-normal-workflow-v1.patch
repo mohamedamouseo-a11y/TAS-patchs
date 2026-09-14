@@ -1,0 +1,226 @@
+diff --git a/client/src/pages/Login.tsx b/client/src/pages/Login.tsx
+--- a/client/src/pages/Login.tsx
++++ b/client/src/pages/Login.tsx
+@@
+   const getPostLoginDestination = (role?: string | null): string => {
+     const normalized = String(role ?? "").trim();
+-    if (normalized === "LeadDispatcher") return "/tas/sales";
++    // Lead Dispatcher uses the same shared Leads workspace as the rest of sales.
++    // Distribution remains available from TAS Sales, but login must not force a
++    // dispatcher-only workflow.
++    if (normalized === "LeadDispatcher") return "/leads";
+     return "/";
+   };
+
+diff --git a/client/src/components/CRMLayout.tsx b/client/src/components/CRMLayout.tsx
+--- a/client/src/components/CRMLayout.tsx
++++ b/client/src/components/CRMLayout.tsx
+@@
+     {
+       href: "/leads",
+       labelKey: "leads",
+       icon: <Users size={18} />,
+       badge: slaLeads?.total && slaLeads.total > 0 ? slaLeads.total : undefined,
+-      roles: ["Admin", "admin", "SalesManager", "SalesAgent", "MediaBuyer"],
++      roles: ["Admin", "admin", "SalesManager", "SalesAgent", "LeadDispatcher", "MediaBuyer"],
+@@
+     {
+       href: "/settings",
+       labelKey: "settings",
+       icon: <Settings size={18} />,
+-      roles: ["Admin", "admin", "SalesManager", "SalesAgent", "MediaBuyer", "AccountManager", "AccountManagerLead"],
++      roles: ["Admin", "admin", "SalesManager", "SalesAgent", "LeadDispatcher", "MediaBuyer", "AccountManager", "AccountManagerLead"],
+     },
+
+diff --git a/client/src/pages/LeadsList.tsx b/client/src/pages/LeadsList.tsx
+--- a/client/src/pages/LeadsList.tsx
++++ b/client/src/pages/LeadsList.tsx
+@@
+-  const isAdminOrManager = ["Admin", "SalesManager", "admin"].includes(user?.role ?? "");
++  // LeadDispatcher works in the same Leads page and Add Lead flow. Keeping it
++  // here also exposes the existing owner/assignment controls and existing
++  // export action instead of maintaining dispatcher-specific duplicates.
++  const isAdminOrManager = ["Admin", "SalesManager", "admin", "LeadDispatcher"].includes(user?.role ?? "");
+
+diff --git a/client/src/pages/tas/TASSalesPage.tsx b/client/src/pages/tas/TASSalesPage.tsx
+--- a/client/src/pages/tas/TASSalesPage.tsx
++++ b/client/src/pages/tas/TASSalesPage.tsx
+@@
+   const isFinance = role === 'Finance';
+   const isLeadDispatcher = role === 'LeadDispatcher';
+   const canUseDispatcher = isAdmin || isSalesManager || isLeadDispatcher;
+-  const canExportLeads = isAdmin || isSalesManager || isLeadDispatcher;
++  // LeadDispatcher must use the shared /leads Add/Export experience. The TAS
++  // dispatcher tab is retained only for its real special responsibility:
++  // distribution/queue operations.
++  const canExportLeads = isAdmin || isSalesManager;
++  const canCreateDispatcherLead = isAdmin || isSalesManager;
+@@
+-              <SectionCard title={isRTL ? 'إنشاء Lead يدوي' : 'Create manual lead'} subtitle={isRTL ? 'بدون بيع أو إجراءات مالية' : 'No deal or finance actions'} right={<Badge>{isRTL ? 'LeadDispatcher' : 'LeadDispatcher'}</Badge>}>
++              {canCreateDispatcherLead && <SectionCard title={isRTL ? 'إنشاء Lead يدوي' : 'Create manual lead'} subtitle={isRTL ? 'بدون بيع أو إجراءات مالية' : 'No deal or finance actions'} right={<Badge>{isRTL ? 'LeadDispatcher' : 'LeadDispatcher'}</Badge>}>
+                 <div className="space-y-3">
+                   <FieldGroup><FieldLabel>{isRTL ? 'اسم العميل' : 'Customer name'}</FieldLabel><Input value={dispatcherLead.name} onChange={(e) => setDispatcherLead({ ...dispatcherLead, name: e.target.value })} /></FieldGroup>
+                   <FieldGroup><FieldLabel>{isRTL ? 'رقم الهاتف' : 'Phone'}</FieldLabel><Input value={dispatcherLead.phone} onChange={(e) => setDispatcherLead({ ...dispatcherLead, phone: e.target.value })} dir="ltr" /></FieldGroup>
+                   <FieldGroup><FieldLabel>{isRTL ? 'ملاحظات أولية' : 'Initial notes'}</FieldLabel><Textarea value={dispatcherLead.notes} onChange={(e) => setDispatcherLead({ ...dispatcherLead, notes: e.target.value })} /></FieldGroup>
+@@
+                   <Button className="w-full rounded-xl" disabled={!dispatcherLead.phone || createDispatcherLead.isPending} onClick={() => createDispatcherLead.mutate({ name: dispatcherLead.name || undefined, phone: dispatcherLead.phone, notes: dispatcherLead.notes || undefined, assignedToUserId: dispatcherLead.assignedToUserId === 'none' ? undefined : Number(dispatcherLead.assignedToUserId) })}><UserPlus size={14} className="me-2" />{isRTL ? 'إنشاء Lead' : 'Create lead'}</Button>
+                 </div>
+-              </SectionCard>
++              </SectionCard>}
+
+diff --git a/client/src/pages/AdminSettings.tsx b/client/src/pages/AdminSettings.tsx
+--- a/client/src/pages/AdminSettings.tsx
++++ b/client/src/pages/AdminSettings.tsx
+@@
+   const isAdmin = isAdminRole(user?.role ?? "");
++  const isLeadDispatcher = String(user?.role ?? "").trim() === "LeadDispatcher";
++  const canCreateCampaign = isAdmin || isLeadDispatcher;
+   const isMediaBuyer = isMediaBuyerRole(user?.role ?? "");
+@@
+-            {isAdmin && <TabsTrigger value="campaigns" className="gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-all data-[state=active]:shadow-md data-[state=active]:font-semibold">
++            {canCreateCampaign && <TabsTrigger value="campaigns" className="gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-all data-[state=active]:shadow-md data-[state=active]:font-semibold">
+               <Megaphone size={13} />{t("campaigns")}
+             </TabsTrigger>}
+@@
+-          {isAdmin && <TabsContent value="campaigns" className="mt-4">
++          {canCreateCampaign && <TabsContent value="campaigns" className="mt-4">
+             <Card>
+@@
+                           <Switch
+                             checked={camp.roundRobinEnabled ?? false}
++                            disabled={!isAdmin}
+                             onCheckedChange={(v) => updateCampaign.mutate({ id: camp.id, roundRobinEnabled: v })}
+                           />
+@@
+                           <Switch
+                             checked={camp.isActive ?? true}
++                            disabled={!isAdmin}
+                             onCheckedChange={(v) => updateCampaign.mutate({ id: camp.id, isActive: v })}
+                           />
+@@
+-                          <Button
++                          {isAdmin ? <Button
+                             variant="ghost"
+                             size="icon"
+                             className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                             onClick={() => deleteCampaign.mutate({ id: camp.id })}
+                           >
+                             <Trash2 size={13} />
+-                          </Button>
++                          </Button> : <span className="text-xs text-muted-foreground">—</span>}
+                         </td>
+
+diff --git a/server/tasRbacPolicy.ts b/server/tasRbacPolicy.ts
+--- a/server/tasRbacPolicy.ts
++++ b/server/tasRbacPolicy.ts
+@@
+   LeadDispatcher: {
+-    dashboard: read("team"), conversations: read("team"), sales: grant({ view: true, edit: true, assign: true }, "team"), reports: read("team"),
++    dashboard: read("team"), conversations: read("team"), sales: grant({ view: true, create: true, edit: true, export: true, assign: true }, "team"), reports: read("team"),
+   },
+
+diff --git a/server/routers.ts b/server/routers.ts
+--- a/server/routers.ts
++++ b/server/routers.ts
+@@
+ const salesReadProcedure = protectedProcedure.use(({ ctx, next }) => {
+-  if (!(isManagerRole(ctx.user.role) || isSalesAgentRole(ctx.user.role) || isMediaBuyerRole(ctx.user.role) || ["ServiceAdvisor", "PartsAgent", "CrmFollowUp", "Viewer"].includes(String(ctx.user.role)))) {
++  if (!(isManagerRole(ctx.user.role) || isSalesAgentRole(ctx.user.role) || isLeadDispatcherRole(ctx.user.role) || isMediaBuyerRole(ctx.user.role) || ["ServiceAdvisor", "PartsAgent", "CrmFollowUp", "Viewer"].includes(String(ctx.user.role)))) {
+     throw new TRPCError({ code: "FORBIDDEN", message: "Sales workspace access required" });
+   }
+   return next({ ctx });
+ });
+ 
+ const salesEditProcedure = protectedProcedure.use(({ ctx, next }) => {
+-  if (!(isManagerRole(ctx.user.role) || isSalesAgentRole(ctx.user.role))) {
++  if (!(isManagerRole(ctx.user.role) || isSalesAgentRole(ctx.user.role) || isLeadDispatcherRole(ctx.user.role))) {
+     throw new TRPCError({ code: "FORBIDDEN", message: "Sales edit access required" });
+   }
+   return next({ ctx });
+ });
+@@
+ const mediaBuyerOrAdminProcedure = protectedProcedure.use(({ ctx, next }) => {
+   if (!(isAdminRole(ctx.user.role) || isMediaBuyerRole(ctx.user.role))) {
+     throw new TRPCError({ code: "FORBIDDEN", message: "Only Admin or Media Buyer can manage campaigns" });
+   }
+   return next({ ctx });
+ });
++
++// Campaign creation is a narrow operational permission for LeadDispatcher.
++// Update/delete remain on mediaBuyerOrAdminProcedure.
++const campaignCreateProcedure = protectedProcedure.use(({ ctx, next }) => {
++  if (!(isAdminRole(ctx.user.role) || isMediaBuyerRole(ctx.user.role) || isLeadDispatcherRole(ctx.user.role))) {
++    throw new TRPCError({ code: "FORBIDDEN", message: "This role cannot create campaigns" });
++  }
++  return next({ ctx });
++});
+@@
+   campaigns: router({
+     list: protectedProcedure.query(() => getCampaigns()),
+     distinctNames: protectedProcedure.query(() => getDistinctCampaignNames()),
+ 
+-    create: mediaBuyerOrAdminProcedure
++    create: campaignCreateProcedure
+@@
+-        const id = await createLead({ ...input, ownerId } as any);
++        const sourceMetadata = {
++          source: "Manual Lead",
++          entryMethod: "manual_add_lead",
++          createdByUserId: ctx.user.id,
++          createdByUserName: ctx.user.name ?? null,
++          createdByUserRole: ctx.user.role,
++        };
++        const id = await createLead({ ...input, ownerId, sourceMetadata } as any);
++        await createAuditLog({
++          userId: ctx.user.id,
++          userName: ctx.user.name,
++          userRole: ctx.user.role,
++          action: "create",
++          entityType: "leads",
++          entityId: id,
++          entityName: input.name || input.phone,
++          details: sourceMetadata,
++        });
+         return { id };
+       }),
+
+diff --git a/client/src/pages/LeadProfile.tsx b/client/src/pages/LeadProfile.tsx
+--- a/client/src/pages/LeadProfile.tsx
++++ b/client/src/pages/LeadProfile.tsx
+@@
+                       {(() => {
+                         const customData = (lead as any).customFieldsData;
+                         const sourceData = (lead as any).sourceMetadata;
+-                        if (!customData || Object.keys(customData).length === 0) return (
++                        const hasCustomData = Boolean(customData && Object.keys(customData).length > 0);
++                        const hasSourceData = Boolean(sourceData && Object.keys(sourceData).length > 0);
++                        if (!hasCustomData && !hasSourceData) return (
+                           <div className="flex flex-col items-center justify-center py-8 text-center">
+                             <FileText size={32} className="text-muted-foreground/40 mb-2" />
+                             <p className="text-sm text-muted-foreground">{isRTL ? "لا توجد بيانات نموذج" : "No form data available"}</p>
+                           </div>
+                         );
+@@
+-                            {Object.entries(customData)
++                            {Object.entries(customData ?? {})
+                               .filter(([key]) => key !== "inbox_url")
+                               .map(([key, value]) => (
+                                 <InfoRow key={key} label={cleanLabel(key)} value={String(value ?? "")} multiline />
+                               ))}
+-                            {customData.inbox_url && (
++                            {customData?.inbox_url && (
+                               <InfoRow label="Inbox URL" value={customData.inbox_url} isLink />
+                             )}
+@@
+                                   {sourceData.campaign_id && <InfoRow label="Campaign ID" value={sourceData.campaign_id} mono />}
+                                   {sourceData.form_id && <InfoRow label="Form ID" value={sourceData.form_id} mono />}
+                                   {sourceData.ad_id && <InfoRow label="Ad ID" value={sourceData.ad_id} mono />}
++                                  {sourceData.createdByUserName && (
++                                    <InfoRow
++                                      label={isRTL ? "أضيف بواسطة" : "Created by"}
++                                      value={`${sourceData.createdByUserName}${sourceData.createdByUserRole ? ` (${sourceData.createdByUserRole})` : ""}`}
++                                    />
++                                  )}
+                                 </div>
+                               </>
+                             )}
