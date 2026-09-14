@@ -1,0 +1,106 @@
+diff --git a/client/src/pages/tas/TASSalesPage.tsx b/client/src/pages/tas/TASSalesPage.tsx
+--- a/client/src/pages/tas/TASSalesPage.tsx
++++ b/client/src/pages/tas/TASSalesPage.tsx
+@@ -94,5 +94,6 @@
+   const [exportDateFrom, setExportDateFrom] = useState('');
+   const [exportDateTo, setExportDateTo] = useState('');
+   const [exporting, setExporting] = useState(false);
++  const isExportDateRangeInvalid = Boolean(exportDateFrom && exportDateTo && exportDateFrom > exportDateTo);
+ 
+   const handleDispatcherExport = async () => {
+@@ -363,21 +364,80 @@
+             <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+-              <DialogContent className="sm:max-w-md">
+-                <DialogHeader>
+-                  <DialogTitle>{isRTL ? 'تصدير العملاء إلى Excel' : 'Export Leads to Excel'}</DialogTitle>
++              <DialogContent className="sm:max-w-[520px]" dir={isRTL ? 'rtl' : 'ltr'}>
++                <DialogHeader className={isRTL ? 'pr-14 text-right' : 'pr-14 text-left'}>
++                  <DialogTitle className="text-lg">{isRTL ? 'تصدير العملاء إلى Excel' : 'Export Leads to Excel'}</DialogTitle>
++                  <p className="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
++                    {isRTL
++                      ? 'حدد تاريخ البداية والنهاية لتصدير العملاء خلال الفترة المطلوبة.'
++                      : 'Choose a start and end date to export leads within the required period.'}
++                  </p>
+                 </DialogHeader>
+-                <div className="space-y-4 py-2">
+-                  <FieldGroup>
+-                    <FieldLabel>{isRTL ? 'من تاريخ' : 'From date'}</FieldLabel>
+-                    <Input type="date" value={exportDateFrom} onChange={(e) => setExportDateFrom(e.target.value)} />
+-                  </FieldGroup>
+-                  <FieldGroup>
+-                    <FieldLabel>{isRTL ? 'إلى تاريخ' : 'To date'}</FieldLabel>
+-                    <Input type="date" value={exportDateTo} onChange={(e) => setExportDateTo(e.target.value)} />
+-                  </FieldGroup>
++
++                <div className="px-6 py-5">
++                  <div className="mb-5 flex items-start gap-3 rounded-xl border border-[var(--tas-border)] bg-[color-mix(in_srgb,var(--tas-gold)_7%,white)] p-3.5 dark:bg-zinc-800/60">
++                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--tas-gold)_18%,white)] text-[var(--tas-text)]">
++                      <FileSpreadsheet size={17} />
++                    </div>
++                    <div className="min-w-0">
++                      <p className="text-sm font-bold text-[var(--tas-text)]">
++                        {isRTL ? 'فترة التصدير' : 'Export period'}
++                      </p>
++                      <p className="mt-1 text-xs leading-5 text-[var(--tas-text-muted)]">
++                        {isRTL ? 'التاريخان مطلوبان قبل بدء التصدير.' : 'Both dates are required before export starts.'}
++                      </p>
++                    </div>
++                  </div>
++
++                  <div className="grid gap-4 sm:grid-cols-2">
++                    <FieldGroup className="space-y-2">
++                      <FieldLabel className="text-sm text-[var(--tas-text)]">{isRTL ? 'من تاريخ' : 'From date'}</FieldLabel>
++                      <Input
++                        type="date"
++                        value={exportDateFrom}
++                        max={exportDateTo || undefined}
++                        onChange={(e) => setExportDateFrom(e.target.value)}
++                        className="h-11 rounded-xl border-[var(--tas-border)] bg-white px-3 shadow-none dark:bg-zinc-950"
++                        lang={isRTL ? 'ar-EG' : 'en'}
++                        aria-label={isRTL ? 'من تاريخ' : 'From date'}
++                        dir="ltr"
++                      />
++                    </FieldGroup>
++
++                    <FieldGroup className="space-y-2">
++                      <FieldLabel className="text-sm text-[var(--tas-text)]">{isRTL ? 'إلى تاريخ' : 'To date'}</FieldLabel>
++                      <Input
++                        type="date"
++                        value={exportDateTo}
++                        min={exportDateFrom || undefined}
++                        onChange={(e) => setExportDateTo(e.target.value)}
++                        className="h-11 rounded-xl border-[var(--tas-border)] bg-white px-3 shadow-none dark:bg-zinc-950"
++                        lang={isRTL ? 'ar-EG' : 'en'}
++                        aria-label={isRTL ? 'إلى تاريخ' : 'To date'}
++                        dir="ltr"
++                      />
++                    </FieldGroup>
++                  </div>
++
++                  {isExportDateRangeInvalid && (
++                    <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
++                      {isRTL ? 'تاريخ البداية يجب أن يكون قبل تاريخ النهاية.' : 'Start date must be before end date.'}
++                    </div>
++                  )}
+                 </div>
+-                <DialogFooter>
+-                  <Button variant="outline" onClick={() => setExportDialogOpen(false)} disabled={exporting}>{isRTL ? 'إلغاء' : 'Cancel'}</Button>
+-                  <Button onClick={handleDispatcherExport} disabled={exporting || !exportDateFrom || !exportDateTo}>
++
++                <DialogFooter className="gap-3 sm:items-center" dir="ltr">
++                  <Button
++                    variant="outline"
++                    className="h-10 w-full rounded-xl sm:w-auto sm:min-w-24"
++                    onClick={() => setExportDialogOpen(false)}
++                    disabled={exporting}
++                  >
++                    {isRTL ? 'إلغاء' : 'Cancel'}
++                  </Button>
++                  <Button
++                    className="h-10 w-full rounded-xl bg-[var(--tas-gold)] text-[var(--tas-on-gold)] hover:opacity-90 sm:w-auto sm:min-w-28"
++                    onClick={handleDispatcherExport}
++                    disabled={exporting || !exportDateFrom || !exportDateTo || isExportDateRangeInvalid}
++                  >
+                     {exporting ? (isRTL ? 'جاري التصدير...' : 'Exporting...') : (isRTL ? 'تصدير' : 'Export')}
+                   </Button>
+                 </DialogFooter>
