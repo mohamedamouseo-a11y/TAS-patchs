@@ -1,14 +1,20 @@
-Use `TAS-IN-APP-NOTIFICATIONS-MIGRATION-V1` from `TAS-patchs`.
+You are connected to the TAS project server.
 
-Apply `in-app-notifications-migration.patch` to a clean TAS worktree based on `928a88d54e6370dc2ecc1f862f2592acf03b91d7`.
+Patch source is the GitHub repo `mohamedamouseo-a11y/TAS-patchs`:
+`TAS-IN-APP-NOTIFICATIONS-MIGRATION-V1/in-app-notifications-migration.patch`
 
-Then:
+Do not search `/tmp` for the patch. Fetch that exact file from the patch repo, then apply it to a clean TAS worktree based on `928a88d54e6370dc2ecc1f862f2592acf03b91d7`.
+
+Then run:
 - `pnpm build`
-- test migration on disposable MySQL with table missing
-- test again with table already present
-- confirm only `drizzle/0023_in_app_notifications.sql` and `drizzle/meta/_journal.json` changed
+- disposable MySQL test with table missing
+- disposable MySQL test with table already present
 
-Do not touch production. Do not push. I will push manually from the system.
+Only these TAS files may change:
+- `drizzle/0023_in_app_notifications.sql`
+- `drizzle/meta/_journal.json`
+
+Do not touch production and do not push. Push is manual from the system.
 
 Return:
 PATCH_APPLIED=
