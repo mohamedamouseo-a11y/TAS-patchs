@@ -1,0 +1,126 @@
+diff --git a/client/src/components/CRMLayout.tsx b/client/src/components/CRMLayout.tsx
+--- a/client/src/components/CRMLayout.tsx
++++ b/client/src/components/CRMLayout.tsx
+@@ -139,6 +139,26 @@ export default function CRMLayout({ children }: { children: React.ReactNode }) {
+     }
+     return !legacyRoles || legacyRoles.includes(role);
+   };
++
++  const SIDEBAR_FEATURE_MAP: Record<string, string> = {
++    "/tas": "dashboard.home",
++    "/tas/conversations": "conversations.inbox",
++    "/tas/sales": "sales.overview",
++    "/tas/whatsapp-cloud": "integrations.whatsapp_cloud",
++    "/tas/shipping-agent": "shipping.agent",
++    "/tas/finance": "finance.overview",
++    "/tas/service": "service.overview",
++    "/tas/after-sales": "after_sales.overview",
++    "/tas/operations": "operations.overview",
++    "/tas/reports": "reports.overview",
++    "/tas/marketing": "marketing.overview",
++    "/tas/admin": "admin.overview",
++    "/leads": "sales.leads",
++    "/import": "sales.excel_imports",
++    "/competitive-queues": "sales.competitive_queues",
++    "/audit-log": "admin.audit_log",
++  };
++  const canUseFeatureHref = (href: string) => {
++    const featureKey = SIDEBAR_FEATURE_MAP[href];
++    if (!featureKey) return true;
++    return Boolean((tasRbacQ.data as any)?.featurePermissions?.[featureKey]?.view);
++  };
+   const showWaGateway = role !== "Viewer" || Boolean(taraModeratorProfileQ.data?.canAccess);
+   const normalizedRole = String(role).trim().toLowerCase().replace(/[\s_-]+/g, "");
+   const showTara = Boolean(taraModeratorProfileQ.data?.canAccess) || ["admin", "salesmanager", "superadmin", "superadministrator"].includes(normalizedRole);
+@@ -398,7 +418,7 @@ export default function CRMLayout({ children }: { children: React.ReactNode }) {
+   ];
+ 
+   const visibleNavItems = navItems.filter(
+-    (item) => (item.visible ?? true) && canUseHref(item.href, item.roles)
++    (item) => (item.visible ?? true) && canUseHref(item.href, item.roles) && canUseFeatureHref(item.href)
+   );
+ 
+   const navLabelFallback: Record<string, string> = {
+diff --git a/client/src/App.tsx b/client/src/App.tsx
+--- a/client/src/App.tsx
++++ b/client/src/App.tsx
+@@ -95,30 +95,30 @@ function Router() {
+       <Route path="/" component={AgentDashboard} />
+       <Route path="/login" component={Login} />
+       <Route path="/dashboard" component={AgentDashboard} />
+-      <Route path="/tas">{() => <TASPermissionGuard module="dashboard"><TASDashboard /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/conversations">{() => <TASPermissionGuard module="conversations"><TASConversationsPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/shipping-agent">{() => <TASPermissionGuard module="shipping"><TASShipmentAgentPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/finance">{() => <TASPermissionGuard module="finance"><TASFinancePage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/service">{() => <TASPermissionGuard module="service"><TASServicePage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/after-sales">{() => <TASPermissionGuard module="after_sales"><TASAfterSalesPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/sales">{() => <TASPermissionGuard module="sales"><TASSalesPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/operations">{() => <TASPermissionGuard module="operations"><TASOperationsPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/reports">{() => <TASPermissionGuard module="reports"><TASSalesPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/marketing">{() => <TASPermissionGuard module="marketing"><TASMarketingPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/admin/permissions">{() => <TASPermissionGuard module="roles" adminOnly><TASRolesPermissionsPage /></TASPermissionGuard>}</Route>
+-      <Route path="/tas/admin">{() => <TASPermissionGuard module="admin"><TASAdminPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas">{() => <TASPermissionGuard module="dashboard" feature="dashboard.home"><TASDashboard /></TASPermissionGuard>}</Route>
++      <Route path="/tas/conversations">{() => <TASPermissionGuard module="conversations" feature="conversations.inbox"><TASConversationsPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/shipping-agent">{() => <TASPermissionGuard module="shipping" feature="shipping.agent"><TASShipmentAgentPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/finance">{() => <TASPermissionGuard module="finance" feature="finance.overview"><TASFinancePage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/service">{() => <TASPermissionGuard module="service" feature="service.overview"><TASServicePage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/after-sales">{() => <TASPermissionGuard module="after_sales" feature="after_sales.overview"><TASAfterSalesPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/sales">{() => <TASPermissionGuard module="sales" feature="sales.overview"><TASSalesPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/operations">{() => <TASPermissionGuard module="operations" feature="operations.overview"><TASOperationsPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/reports">{() => <TASPermissionGuard module="reports" feature="reports.overview"><TASSalesPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/marketing">{() => <TASPermissionGuard module="marketing" feature="marketing.overview"><TASMarketingPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/admin/permissions">{() => <TASPermissionGuard module="roles" feature="admin.roles_permissions" adminOnly><TASRolesPermissionsPage /></TASPermissionGuard>}</Route>
++      <Route path="/tas/admin">{() => <TASPermissionGuard module="admin" feature="admin.overview"><TASAdminPage /></TASPermissionGuard>}</Route>
+       <Route path="/tas/quotation/:token" component={TASQuotationPublicPage} />
+-      <Route path="/tas/whatsapp-cloud">{() => <TASPermissionGuard module="integrations"><WhatsAppCloud /></TASPermissionGuard>}</Route>
++      <Route path="/tas/whatsapp-cloud">{() => <TASPermissionGuard module="integrations" feature="integrations.whatsapp_cloud"><WhatsAppCloud /></TASPermissionGuard>}</Route>
+ 
+       {/* Automotive-specific UI restored from the approved source. Legacy /tas routes remain unchanged. */}
+-      <Route path="/automotive/catalog">{() => <TASPermissionGuard module="catalog"><VehicleCatalogPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/sales">{() => <TASPermissionGuard module="sales"><TASSalesPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/conversations">{() => <TASPermissionGuard module="conversations"><AutomotiveConversationsPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/whatsapp-cloud">{() => <TASPermissionGuard module="integrations"><WhatsAppCloud /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/shipping-agent">{() => <TASPermissionGuard module="shipping"><TASShipmentAgentPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/finance">{() => <TASPermissionGuard module="finance"><AutomotiveFinancePage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/service">{() => <TASPermissionGuard module="service"><AutomotiveServicePage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/after-sales">{() => <TASPermissionGuard module="after_sales"><AutomotiveAfterSalesPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/operations">{() => <TASPermissionGuard module="operations"><AutomotiveOperationsPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/reports">{() => <TASPermissionGuard module="reports"><AutomotiveReportsPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/marketing">{() => <TASPermissionGuard module="marketing"><AutomotiveMarketingPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive/admin">{() => <TASPermissionGuard module="admin"><AutomotiveAdminPage /></TASPermissionGuard>}</Route>
+-      <Route path="/automotive">{() => <TASPermissionGuard module="dashboard"><AutomotiveDashboard /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/catalog">{() => <TASPermissionGuard module="catalog" feature="catalog.vehicles"><VehicleCatalogPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/sales">{() => <TASPermissionGuard module="sales" feature="sales.overview"><TASSalesPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/conversations">{() => <TASPermissionGuard module="conversations" feature="conversations.inbox"><AutomotiveConversationsPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/whatsapp-cloud">{() => <TASPermissionGuard module="integrations" feature="integrations.whatsapp_cloud"><WhatsAppCloud /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/shipping-agent">{() => <TASPermissionGuard module="shipping" feature="shipping.agent"><TASShipmentAgentPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/finance">{() => <TASPermissionGuard module="finance" feature="finance.overview"><AutomotiveFinancePage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/service">{() => <TASPermissionGuard module="service" feature="service.overview"><AutomotiveServicePage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/after-sales">{() => <TASPermissionGuard module="after_sales" feature="after_sales.overview"><AutomotiveAfterSalesPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/operations">{() => <TASPermissionGuard module="operations" feature="operations.overview"><AutomotiveOperationsPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/reports">{() => <TASPermissionGuard module="reports" feature="reports.overview"><AutomotiveReportsPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/marketing">{() => <TASPermissionGuard module="marketing" feature="marketing.overview"><AutomotiveMarketingPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive/admin">{() => <TASPermissionGuard module="admin" feature="admin.overview"><AutomotiveAdminPage /></TASPermissionGuard>}</Route>
++      <Route path="/automotive">{() => <TASPermissionGuard module="dashboard" feature="dashboard.home"><AutomotiveDashboard /></TASPermissionGuard>}</Route>
+@@ -150,16 +150,16 @@ function Router() {
+       <Route path="/team-dashboard" component={TeamDashboard} />
+       <Route path="/sales-funnel" component={SalesFunnelDashboard} />
+       <Route path="/task-sla" component={TaskSlaDashboard} />
+-      <Route path="/leads" component={LeadsList} />
+-      <Route path="/leads/:id" component={LeadProfile} />
++      <Route path="/leads">{() => <TASPermissionGuard module="sales" feature="sales.leads"><LeadsList /></TASPermissionGuard>}</Route>
++      <Route path="/leads/:id">{() => <TASPermissionGuard module="sales" feature="sales.lead_profile"><LeadProfile /></TASPermissionGuard>}</Route>
+       <Route path="/admin" component={AdminSettings} />
+       <Route path="/settings" component={AdminSettings} />
+-      <Route path="/import">{() => <ImportRouteGuard><ImportLeads /></ImportRouteGuard>}</Route>
+-      <Route path="/competitive-queues" component={TASCompetitiveQueues} />
++      <Route path="/import">{() => <TASPermissionGuard module="sales" feature="sales.excel_imports"><ImportRouteGuard><ImportLeads /></ImportRouteGuard></TASPermissionGuard>}</Route>
++      <Route path="/competitive-queues">{() => <TASPermissionGuard module="sales" feature="sales.competitive_queues"><TASCompetitiveQueues /></TASPermissionGuard>}</Route>
+       <Route path="/admin/chat" component={ChatMonitor} />
+       <Route path="/trash" component={TrashPage} />
+-      <Route path="/audit-log" component={AuditLogPage} />
++      <Route path="/audit-log">{() => <TASPermissionGuard module="audit_log" feature="admin.audit_log"><AuditLogPage /></TASPermissionGuard>}</Route>
+       <Route path="/calendar" component={CalendarPage} />
+       <Route path="/ux-library" component={UXLibraryPage} />
+       <Route path="/clients/:id" component={ClientProfile} />
