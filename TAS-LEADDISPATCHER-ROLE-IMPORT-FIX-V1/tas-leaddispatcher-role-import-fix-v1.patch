@@ -1,0 +1,6 @@
+diff --git a/server/routers.ts b/server/routers.ts
+--- a/server/routers.ts
++++ b/server/routers.ts
+@@
+-import { APP_USER_ROLES, isAdminRole, isManagerRole, isMediaBuyerRole, isSalesAgentRole } from "./roleUtils";
++import { APP_USER_ROLES, isAdminRole, isManagerRole, isMediaBuyerRole, isSalesAgentRole, isLeadDispatcherRole } from "./roleUtils";
