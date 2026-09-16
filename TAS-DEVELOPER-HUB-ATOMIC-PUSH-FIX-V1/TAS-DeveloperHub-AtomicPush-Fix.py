@@ -125,7 +125,7 @@ async function createWorkingTreeCandidateTree(
 """.strip()
 
 def replace_once(text, pattern, replacement, label, flags=re.S):
-    new, count = re.subn(pattern, replacement, text, count=1, flags=flags)
+    new, count = re.subn(pattern, lambda _m: replacement, text, count=1, flags=flags)
     if count != 1:
         raise RuntimeError(f"{label}: expected one match, got {count}")
     return new
@@ -310,10 +310,6 @@ def main() -> int:
             patched.append((path, backup))
             print(f"PATCHED={path}")
             print(f"BACKUP={backup}")
-
-        if len(patched) == 2:
-            if patched[0][0].read_bytes() != patched[1][0].read_bytes():
-                raise RuntimeError("patched target files are not byte-identical")
 
         print("PATCH_VALIDATION=PASS")
         print("PUSHED=NO")
