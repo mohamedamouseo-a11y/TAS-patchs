@@ -29,8 +29,6 @@ def patch_text(text: str) -> tuple[str, str]:
     else:
         raise RuntimeError("expected malformed or corrected remoteExists guard not found")
 
-    # Safety validation: remove only the known corruption and verify the preview
-    # now contains one clean remote/local-history guard.
     if "if (remoteExists if (" in block or "{if (remoteExists" in block:
         raise RuntimeError("malformed remoteExists guard still present")
     if block.count(GOOD_LINE) != 1:
@@ -42,8 +40,7 @@ def patch_text(text: str) -> tuple[str, str]:
     if 'expectedAction: "clean_snapshot_and_push" as const' not in block:
         raise RuntimeError("clean_snapshot_and_push plan missing")
 
-    updated = text[:start] + block + text[end:]
-    return updated, state
+    return text[:start] + block + text[end:], state
 
 
 def main() -> int:
@@ -66,17 +63,19 @@ def main() -> int:
         return 1
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir = pathlib.Path("/tmp") / f"tas-developerhub-v7-backup-{stamp}"
     backups: list[tuple[pathlib.Path, pathlib.Path]] = []
     changed = 0
     try:
-        for path, updated, state in prepared:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for index, (path, updated, state) in enumerate(prepared, start=1):
             original = path.read_text(encoding="utf-8")
             print(f"TARGET={path}")
             print(f"STATE={state}")
             if updated == original:
                 continue
 
-            backup = path.with_name(path.name + f".before-malformed-guard-fix-v7.{stamp}")
+            backup = backup_dir / f"target-{index}-developerHub.ts"
             shutil.copy2(path, backup)
             backups.append((path, backup))
 
@@ -86,7 +85,6 @@ def main() -> int:
             changed += 1
             print(f"BACKUP={backup}")
 
-        # Re-read every target after writes and validate final state.
         for path, _, _ in prepared:
             final = path.read_text(encoding="utf-8")
             _, final_state = patch_text(final)
@@ -95,6 +93,7 @@ def main() -> int:
 
         print("PATCH_VALIDATION=PASS")
         print(f"CHANGED_COUNT={changed}")
+        print(f"BACKUP_DIR={backup_dir}")
         print("PUSHED=NO")
         return 0
 
