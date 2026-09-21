@@ -1,0 +1,106 @@
+diff --git a/drizzle/schema.ts b/drizzle/schema.ts
+--- a/drizzle/schema.ts
++++ b/drizzle/schema.ts
+@@ -428,6 +428,7 @@ export const leads = mysqlTable("leads", {
+ 	name: varchar({ length: 255 }),
+ 	phone: varchar({ length: 50 }).notNull(),
+ 	country: varchar({ length: 100 }).default('Egypt'),
++	residence: varchar({ length: 255 }),
+ 	businessProfile: text(),
+diff --git a/shared/schema.ts b/shared/schema.ts
+--- a/shared/schema.ts
++++ b/shared/schema.ts
+@@ -425,6 +425,7 @@ export const leads = mysqlTable("leads", {
+ 	name: varchar({ length: 255 }),
+ 	phone: varchar({ length: 50 }).notNull(),
+ 	country: varchar({ length: 100 }).default('Egypt'),
++	residence: varchar({ length: 255 }),
+ 	businessProfile: text(),
+diff --git a/server/routers.ts b/server/routers.ts
+--- a/server/routers.ts
++++ b/server/routers.ts
+@@ -1449,6 +1449,7 @@
+           name: z.string().optional(),
+           phone: z.string().min(3),
+           country: z.string().optional(),
++          residence: z.string().trim().max(255).optional(),
+           businessProfile: z.string().optional(),
+@@ -1531,6 +1532,7 @@
+           name: z.string().optional(),
+           phone: z.string().optional(),
+           country: z.string().optional(),
++          residence: z.string().trim().max(255).nullable().optional(),
+           businessProfile: z.string().optional(),
+diff --git a/server/tasSales.ts b/server/tasSales.ts
+--- a/server/tasSales.ts
++++ b/server/tasSales.ts
+@@ -337,10 +337,18 @@ export async function listTASSalesDispatcherLeads(filters?: AnyRow) {
+   const clauses: any[] = [sql`l.deletedAt IS NULL`];
+   if (filters?.assigned === false) clauses.push(sql`l.ownerId IS NULL`);
+   if (filters?.assigned === true) clauses.push(sql`l.ownerId IS NOT NULL`);
++  if (filters?.contactStatus === "contacted") {
++    clauses.push(sql`EXISTS (SELECT 1 FROM activities ca WHERE ca.leadId = l.id AND ca.deletedAt IS NULL AND ca.type <> 'Note')`);
++  }
++  if (filters?.contactStatus === "not_contacted") {
++    clauses.push(sql`NOT EXISTS (SELECT 1 FROM activities ca WHERE ca.leadId = l.id AND ca.deletedAt IS NULL AND ca.type <> 'Note')`);
++  }
+   if (filters?.search) {
+     const q = `%${clean(filters.search)}%`;
+-    clauses.push(sql`(l.name LIKE ${q} OR l.phone LIKE ${q} OR l.campaignName LIKE ${q} OR l.stage LIKE ${q})`);
++    clauses.push(sql`(l.name LIKE ${q} OR l.phone LIKE ${q} OR l.residence LIKE ${q} OR l.campaignName LIKE ${q} OR l.stage LIKE ${q})`);
+   }
+@@ -353,6 +361,7 @@
+       l.phone,
+       l.country,
++      l.residence,
+       l.leadQuality,
+@@ -363,6 +372,9 @@
+       l.createdAt,
+       l.updatedAt,
++      EXISTS (SELECT 1 FROM activities ca WHERE ca.leadId = l.id AND ca.deletedAt IS NULL AND ca.type <> 'Note') AS hasSalesContact,
++      (SELECT MAX(ca.activityTime) FROM activities ca WHERE ca.leadId = l.id AND ca.deletedAt IS NULL AND ca.type <> 'Note') AS lastSalesContactAt,
++      (SELECT cu.name FROM activities ca LEFT JOIN users cu ON cu.id = ca.userId WHERE ca.leadId = l.id AND ca.deletedAt IS NULL AND ca.type <> 'Note' ORDER BY ca.activityTime DESC, ca.id DESC LIMIT 1) AS lastContactedByName,
+       u.name AS ownerName,
+@@ -394,8 +406,8 @@ export async function createTASSalesManualLead(input: AnyRow) {
+-    INSERT INTO leads (name, phone, country, businessProfile, leadQuality, ownerId, stage, notes, campaignName, sourceMetadata)
+-    VALUES (${clean(input.name) || phone}, ${phone}, ${input.country ?? "Egypt"}, ${input.businessProfile ?? null}, ${input.leadQuality ?? "Unknown"}, ${assignedToUserId}, ${input.stage ?? "New"}, ${input.notes ?? null}, ${input.campaignName ?? "TAS Manual Sales"}, ${JSON.stringify({ source: "TAS Sales Dispatcher", manual: true })})
++    INSERT INTO leads (name, phone, country, residence, businessProfile, leadQuality, ownerId, stage, notes, campaignName, sourceMetadata)
++    VALUES (${clean(input.name) || phone}, ${phone}, ${input.country ?? "Egypt"}, ${clean(input.residence) || null}, ${input.businessProfile ?? null}, ${input.leadQuality ?? "Unknown"}, ${assignedToUserId}, ${input.stage ?? "New"}, ${input.notes ?? null}, ${input.campaignName ?? "TAS Manual Sales"}, ${JSON.stringify({ source: "TAS Sales Dispatcher", manual: true })})
+diff --git a/client/src/pages/tas/TASSalesPage.tsx b/client/src/pages/tas/TASSalesPage.tsx
+--- a/client/src/pages/tas/TASSalesPage.tsx
++++ b/client/src/pages/tas/TASSalesPage.tsx
+@@ -152,7 +152,8 @@
+-  const [dispatcherLead, setDispatcherLead] = useState({ name: '', phone: '', notes: '', assignedToUserId: 'none' });
++  const [dispatcherLead, setDispatcherLead] = useState({ name: '', phone: '', residence: '', notes: '', assignedToUserId: 'none' });
++  const [contactStatusFilter, setContactStatusFilter] = useState<'all' | 'contacted' | 'not_contacted'>('all');
+@@ -173,7 +174,7 @@
+-  const assignedLeadsQ = trpc.tas.sales.listDispatcherLeads.useQuery({ assigned: true, search: search || undefined }, { enabled: canUseDispatcher });
++  const assignedLeadsQ = trpc.tas.sales.listDispatcherLeads.useQuery({ assigned: true, search: search || undefined, contactStatus: contactStatusFilter === 'all' ? undefined : contactStatusFilter }, { enabled: canUseDispatcher });
+@@ -233,7 +234,7 @@
+-    onSuccess: () => { toast.success(isRTL ? 'تم إنشاء الليد' : 'Lead created'); setDispatcherLead({ name: '', phone: '', notes: '', assignedToUserId: 'none' }); refresh(); },
++    onSuccess: () => { toast.success(isRTL ? 'تم إنشاء الليد' : 'Lead created'); setDispatcherLead({ name: '', phone: '', residence: '', notes: '', assignedToUserId: 'none' }); refresh(); },
+@@ -451,6 +452,7 @@
+                   <FieldGroup><FieldLabel>{isRTL ? 'اسم العميل' : 'Customer name'}</FieldLabel><Input value={dispatcherLead.name} onChange={(e) => setDispatcherLead({ ...dispatcherLead, name: e.target.value })} /></FieldGroup>
+                   <FieldGroup><FieldLabel>{isRTL ? 'رقم الهاتف' : 'Phone'}</FieldLabel><Input value={dispatcherLead.phone} onChange={(e) => setDispatcherLead({ ...dispatcherLead, phone: e.target.value })} dir="ltr" /></FieldGroup>
++                  <FieldGroup><FieldLabel>{isRTL ? 'محل الإقامة' : 'Residence'}</FieldLabel><Input value={dispatcherLead.residence} onChange={(e) => setDispatcherLead({ ...dispatcherLead, residence: e.target.value })} placeholder={isRTL ? 'المحافظة / المدينة / المنطقة' : 'Governorate / city / area'} /></FieldGroup>
+                   <FieldGroup><FieldLabel>{isRTL ? 'ملاحظات أولية' : 'Initial notes'}</FieldLabel><Textarea value={dispatcherLead.notes} onChange={(e) => setDispatcherLead({ ...dispatcherLead, notes: e.target.value })} /></FieldGroup>
+@@ -464,7 +466,7 @@
+-                  <Button className="w-full rounded-xl" disabled={!dispatcherLead.phone || createDispatcherLead.isPending} onClick={() => createDispatcherLead.mutate({ name: dispatcherLead.name || undefined, phone: dispatcherLead.phone, notes: dispatcherLead.notes || undefined, assignedToUserId: dispatcherLead.assignedToUserId === 'none' ? undefined : Number(dispatcherLead.assignedToUserId) })}><UserPlus size={14} className="me-2" />{isRTL ? 'إنشاء Lead' : 'Create lead'}</Button>
++                  <Button className="w-full rounded-xl" disabled={!dispatcherLead.phone || createDispatcherLead.isPending} onClick={() => createDispatcherLead.mutate({ name: dispatcherLead.name || undefined, phone: dispatcherLead.phone, residence: dispatcherLead.residence || undefined, notes: dispatcherLead.notes || undefined, assignedToUserId: dispatcherLead.assignedToUserId === 'none' ? undefined : Number(dispatcherLead.assignedToUserId) })}><UserPlus size={14} className="me-2" />{isRTL ? 'إنشاء Lead' : 'Create lead'}</Button>
+@@ -512,8 +514,16 @@
+-            <SectionCard title={isRTL ? 'ليدز موزعة' : 'Assigned leads'} right={<Badge>{assignedLeads.length}</Badge>}>
++            <SectionCard title={isRTL ? 'متابعة تواصل السيلز' : 'Sales contact tracking'} right={<div className="flex items-center gap-2"><Select value={contactStatusFilter} onValueChange={(value) => setContactStatusFilter(value as typeof contactStatusFilter)}><SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{isRTL ? 'كل العملاء' : 'All leads'}</SelectItem><SelectItem value="contacted">{isRTL ? 'تم التواصل' : 'Contacted'}</SelectItem><SelectItem value="not_contacted">{isRTL ? 'لم يتم التواصل' : 'Not contacted'}</SelectItem></SelectContent></Select><Badge>{assignedLeads.length}</Badge></div>}>
+               <div className="overflow-x-auto">
+-                <Table><TableHeader><TableRow><TableHead>{isRTL ? 'العميل' : 'Lead'}</TableHead><TableHead>{isRTL ? 'المسؤول' : 'Owner'}</TableHead><TableHead>{isRTL ? 'المرحلة' : 'Stage'}</TableHead><TableHead>{isRTL ? 'إعادة توزيع' : 'Reassign'}</TableHead></TableRow></TableHeader><TableBody>
++                <Table><TableHeader><TableRow><TableHead>{isRTL ? 'العميل' : 'Lead'}</TableHead><TableHead>{isRTL ? 'محل الإقامة' : 'Residence'}</TableHead><TableHead>{isRTL ? 'المسؤول' : 'Owner'}</TableHead><TableHead>{isRTL ? 'حالة التواصل' : 'Contact status'}</TableHead><TableHead>{isRTL ? 'آخر تواصل' : 'Last contact'}</TableHead><TableHead>{isRTL ? 'المرحلة' : 'Stage'}</TableHead><TableHead>{isRTL ? 'إعادة توزيع' : 'Reassign'}</TableHead></TableRow></TableHeader><TableBody>
+                   {assignedLeads.slice(0, 120).map((lead: any) => {
+                     const assignee = assignDraft[lead.id] ?? String(lead.ownerId ?? 'none');
+-                    return <TableRow key={lead.id}><TableCell><div className="font-bold">{lead.name || lead.phone || `#${lead.id}`}</div><div className="text-xs text-zinc-400">{lead.phone || '—'}</div></TableCell><TableCell>{lead.ownerName || '—'}</TableCell><TableCell><StatusBadge status={lead.stage || 'New'} /></TableCell><TableCell><div className="flex gap-2"><Select value={assignee}
++                    return <TableRow key={lead.id}><TableCell><div className="font-bold">{lead.name || lead.phone || `#${lead.id}`}</div><div className="text-xs text-zinc-400">{lead.phone || '—'}</div></TableCell><TableCell>{lead.residence || '—'}</TableCell><TableCell>{lead.ownerName || '—'}</TableCell><TableCell><Badge className={Number(lead.hasSalesContact) ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}>{Number(lead.hasSalesContact) ? (isRTL ? 'تم التواصل' : 'Contacted') : (isRTL ? 'لم يتم التواصل' : 'Not contacted')}</Badge></TableCell><TableCell><div className="text-sm">{lead.lastSalesContactAt ? new Date(lead.lastSalesContactAt).toLocaleString(isRTL ? 'ar-EG' : 'en-GB') : '—'}</div>{lead.lastContactedByName && <div className="text-xs text-zinc-400">{lead.lastContactedByName}</div>}</TableCell><TableCell><StatusBadge status={lead.stage || 'New'} /></TableCell><TableCell><div className="flex gap-2"><Select value={assignee}
+diff --git a/drizzle/migrations/20260921_add_lead_residence.sql b/drizzle/migrations/20260921_add_lead_residence.sql
+new file mode 100644
+--- /dev/null
++++ b/drizzle/migrations/20260921_add_lead_residence.sql
+@@ -0,0 +1,2 @@
++-- Add an optional residence field for prospective customers.
++ALTER TABLE leads ADD COLUMN residence VARCHAR(255) NULL AFTER country;
