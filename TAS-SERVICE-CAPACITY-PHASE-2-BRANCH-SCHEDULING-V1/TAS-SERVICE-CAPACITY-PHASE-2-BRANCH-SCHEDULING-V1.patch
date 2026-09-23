@@ -845,7 +845,8 @@ new file mode 100644
 +  console.error("TAS_SERVICE_BRANCH_SCHEDULING_ROLLBACK=FAIL");
 +  console.error("ERROR=" + (error instanceof Error ? error.message : String(error)));
 +  process.exit(1);
-+});diff --git a/server/routers.ts b/server/routers.ts
++});
+diff --git a/server/routers.ts b/server/routers.ts
 --- a/server/routers.ts
 +++ b/server/routers.ts
 @@ -314,9 +314,10 @@
