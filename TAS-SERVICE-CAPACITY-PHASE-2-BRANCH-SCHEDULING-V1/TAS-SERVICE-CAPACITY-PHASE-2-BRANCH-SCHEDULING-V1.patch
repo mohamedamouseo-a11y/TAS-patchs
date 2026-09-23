@@ -173,9 +173,9 @@ diff --git a/server/tasDb.ts b/server/tasDb.ts
 +    UPDATE tas_branches
 +    SET
 +      name = ${name},
-+      city = ${input.city ?? existing.city ?? null},
-+      address = ${input.address ?? existing.address ?? null},
-+      phone = ${input.phone ?? existing.phone ?? null},
++      city = ${input.city !== undefined ? input.city : existing.city ?? null},
++      address = ${input.address !== undefined ? input.address : existing.address ?? null},
++      phone = ${input.phone !== undefined ? input.phone : existing.phone ?? null},
 +      workingHours = ${schedule.workingHours},
 +      workingDaysJson = ${JSON.stringify(schedule.workingDays)},
 +      slotIntervalMinutes = ${schedule.slotIntervalMinutes},
