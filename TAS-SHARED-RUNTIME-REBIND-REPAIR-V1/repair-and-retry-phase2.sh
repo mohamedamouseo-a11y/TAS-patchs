@@ -19,7 +19,7 @@ PM2_PORT=""
 fail() {
   echo "RUNTIME_REBIND=FAIL"
   echo "ERROR=$1"
-  exit 1
+  return 1
 }
 
 for cmd in realpath rsync flock pm2 node curl find awk mv ln mkdir rm; do
