@@ -20,7 +20,12 @@ export DEPLOY_MIGRATION_ROLLBACK_COMMAND="pnpm exec tsx scripts/rollback-tas-ser
 export DEPLOY_MIGRATION_ROLLBACK_VERIFY_COMMAND="pnpm exec tsx scripts/verify-tas-service-branch-scheduling-v1.ts --rolled-back"
 export DEPLOY_MIGRATION_CONTRACT_PATCH_SHA256="$PATCH_SHA"
 
-"$CURRENT/scripts/deploy-active-release.sh" "$STAMPED"
+if ! "$CURRENT/scripts/deploy-active-release.sh" "$STAMPED" >"$TMP/deploy.log" 2>&1; then
+  tail -80 "$TMP/deploy.log" >&2
+  echo "DEPLOY=FAIL"
+  echo "ERROR=ATOMIC_DEPLOY_FAILED"
+  exit 1
+fi
 
 NEW_CURRENT="$(realpath -e "$ROOT/current")"
 cd "$NEW_CURRENT"
@@ -44,7 +49,15 @@ let s=""; process.stdin.on("data",d=>s+=d); process.stdin.on("end",()=>{
   } catch { process.stdout.write("3008"); }
 });')"
 
-HTTP="$(curl -sS -o /dev/null --max-time 8 -w '%{http_code}' "http://127.0.0.1:$PORT/" || true)"
+HTTP="$(curl -sS -o /dev/null --max-time 8 -w '%{http_code}' "http://127.0.0.1:$PORT/tas/service" || true)"
+
+if [ "$PM2_STATUS" != "online" ] || [ "$HTTP" != "200" ]; then
+  echo "DEPLOY=FAIL"
+  echo "PM2=$PM2_STATUS"
+  echo "HTTP=$HTTP"
+  echo "ERROR=POST_DEPLOY_HEALTH_FAILED"
+  exit 1
+fi
 
 echo "PATCH=PASS"
 echo "MIGRATION=PASS"
