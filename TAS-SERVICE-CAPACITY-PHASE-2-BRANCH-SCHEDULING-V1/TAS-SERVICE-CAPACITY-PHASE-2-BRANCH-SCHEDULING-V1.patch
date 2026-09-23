@@ -1,0 +1,891 @@
+diff --git a/client/src/pages/tas/TASServicePage.tsx b/client/src/pages/tas/TASServicePage.tsx
+--- a/client/src/pages/tas/TASServicePage.tsx
++++ b/client/src/pages/tas/TASServicePage.tsx
+@@ -10,7 +10,8 @@
+ import { Badge } from '@/components/ui/badge';
+ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+ import { CalendarClock, CheckCircle2, Clock, Phone, Wrench } from 'lucide-react';
+-import { toast } from 'sonner';
++import { toast } from 'sonner';
++import TASBranchSchedulingSettings from '@/components/tas/TASBranchSchedulingSettings';
+ 
+ const sourceChannels = ['CRM', 'Phone', 'WhatsApp', 'WalkIn', 'Website', 'AI'] as const;
+ 
+@@ -226,8 +227,10 @@
+               </div>
+             )}
+           </SectionCard>
+-        </div>
+-      </div>
+-    </CRMLayout>
++        </div>
++
++        <TASBranchSchedulingSettings />
++      </div>
++    </CRMLayout>
+   );
+ }
+diff --git a/server/tasDb.ts b/server/tasDb.ts
+--- a/server/tasDb.ts
++++ b/server/tasDb.ts
+@@ -209,63 +209,157 @@
+   description: input.notes ?? input.description ?? null,
+ });
+ 
+-export const getTASBranches = async () => {
+-  const db = await getDb();
+-  if (!db) return defaultBranches;
+-  const result = await db.execute(sql`SELECT * FROM tas_branches WHERE isActive = 1 ORDER BY city ASC, name ASC, id ASC`);
+-  const rows = (result as any)[0] ?? [];
+-  return rows.length ? rows : defaultBranches;
+-};
+-
+-export const createTASBranch = async (input: AnyRow) => {
+-  const db = await getDb();
+-  if (!db) return 0;
+-  const result = await db.execute(sql`
+-    INSERT INTO tas_branches (name, city, address, phone, workingHours, capacityPerSlot, slotIntervalMinutes, workdayStartHour, workdayEndHour, isActive)
+-    VALUES (
+-      ${input.name}, ${input.city ?? null}, ${input.address ?? null}, ${input.phone ?? null}, ${input.workingHours ?? null},
+-      ${toNumber(input.capacityPerSlot, 2)}, ${toNumber(input.slotIntervalMinutes, 30)}, ${toNumber(input.workdayStartHour, 9)}, ${toNumber(input.workdayEndHour, 18)}, ${input.isActive === 0 ? 0 : 1}
+-    )
+-  `);
+-  return Number((result as any)[0]?.insertId ?? 0);
+-};
+-
+-export const getAvailableTASSlots = async (input: { day: Date; branchId?: number; serviceTypeId?: number }) => {
+-  const db = await getDb();
+-  const day = input.day instanceof Date ? input.day : new Date(input.day);
+-  const date = day.toISOString().slice(0, 10);
+-  const branches = await getTASBranches();
+-  const branch = branches.find((item: AnyRow) => Number(item.id) === Number(input.branchId)) ?? branches[0] ?? defaultBranches[0];
+-  const serviceTypes = await getTASServiceTypes();
+-  const serviceType = serviceTypes.find((item: AnyRow) => Number(item.id) === Number(input.serviceTypeId));
+-  const durationMinutes = Math.max(15, toNumber(serviceType?.durationMinutes, 60));
+-  const intervalMinutes = Math.max(15, toNumber(branch.slotIntervalMinutes, 30));
+-  const capacity = Math.max(1, Math.min(toNumber(branch.capacityPerSlot, 1), toNumber(serviceType?.slotCapacity ?? serviceType?.defaultCapacityUnits, toNumber(branch.capacityPerSlot, 1))));
+-  const slots = [];
+-  for (let minutes = toNumber(branch.workdayStartHour, 9) * 60; minutes + durationMinutes <= toNumber(branch.workdayEndHour, 18) * 60; minutes += intervalMinutes) {
+-    const startHour = Math.floor(minutes / 60);
+-    const startMinute = minutes % 60;
+-    const endTotal = minutes + durationMinutes;
+-    const endHour = Math.floor(endTotal / 60);
+-    const endMinute = endTotal % 60;
+-    const startAt = `${date}T${String(startHour).padStart(2, "0")}:${String(startMinute).padStart(2, "0")}:00`;
+-    const endAt = `${date}T${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}:00`;
+-    let reserved = 0;
+-    if (db) {
+-      const countRows = await db.execute(sql`
+-        SELECT COUNT(*) AS total
+-        FROM tas_service_bookings
+-        WHERE branchId = ${branch.id}
+-          AND status NOT IN ('Cancelled','NoShow')
+-          AND COALESCE(startAt, TIMESTAMP(preferredDate, preferredTime)) < ${new Date(endAt)}
+-          AND COALESCE(endAt, DATE_ADD(COALESCE(startAt, TIMESTAMP(preferredDate, preferredTime)), INTERVAL ${sql.raw(String(durationMinutes))} MINUTE)) > ${new Date(startAt)}
+-      `);
+-      reserved = Number(((countRows as any)[0] ?? [])[0]?.total ?? 0);
+-    }
+-    slots.push({ startAt, endAt, availableCapacity: Math.max(0, capacity - reserved) });
+-  }
+-  return slots;
+-};
++const normalizeWorkingDays = (value: unknown) => {
++  let raw = value;
++  if (typeof raw === "string") {
++    try { raw = JSON.parse(raw); } catch { raw = []; }
++  }
++  if (!Array.isArray(raw)) return [0, 1, 2, 3, 4, 5, 6];
++  const days = Array.from(new Set(raw.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)));
++  return days.length ? days : [0, 1, 2, 3, 4, 5, 6];
++};
++
++const branchScheduleFromInput = (input: AnyRow, existing?: AnyRow) => {
++  const workdayStartMinutes = Math.max(0, Math.min(1439, toNumber(input.workdayStartMinutes, toNumber(existing?.workdayStartMinutes, toNumber(existing?.workdayStartHour, 9) * 60))));
++  const workdayEndMinutes = Math.max(1, Math.min(1440, toNumber(input.workdayEndMinutes, toNumber(existing?.workdayEndMinutes, toNumber(existing?.workdayEndHour, 18) * 60))));
++  const bookingStartMinutes = Math.max(0, Math.min(1439, toNumber(input.bookingStartMinutes, toNumber(existing?.bookingStartMinutes, workdayStartMinutes))));
++  const bookingEndMinutes = Math.max(0, Math.min(1439, toNumber(input.bookingEndMinutes, toNumber(existing?.bookingEndMinutes, Math.max(workdayStartMinutes, workdayEndMinutes - 60)))));
++  const slotIntervalMinutes = Math.max(15, Math.min(120, toNumber(input.slotIntervalMinutes, toNumber(existing?.slotIntervalMinutes, 30))));
++  const endOfDayBufferMinutes = Math.max(0, Math.min(240, toNumber(input.endOfDayBufferMinutes, toNumber(existing?.endOfDayBufferMinutes, 60))));
++  const workingDays = normalizeWorkingDays(input.workingDaysJson ?? existing?.workingDaysJson);
++
++  if (workdayEndMinutes <= workdayStartMinutes) throw new Error("Workday end must be after start");
++  if (bookingStartMinutes < workdayStartMinutes || bookingEndMinutes < bookingStartMinutes || bookingEndMinutes > workdayEndMinutes) {
++    throw new Error("Booking window must stay inside working hours");
++  }
++  if (workdayEndMinutes - endOfDayBufferMinutes <= workdayStartMinutes) throw new Error("End-of-day buffer is too large");
++
++  const formatTime = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
++  return {
++    workingDays,
++    workdayStartMinutes,
++    workdayEndMinutes,
++    bookingStartMinutes,
++    bookingEndMinutes,
++    slotIntervalMinutes,
++    endOfDayBufferMinutes,
++    workingHours: `${formatTime(workdayStartMinutes)} - ${formatTime(workdayEndMinutes)}`,
++  };
++};
++
++export const getTASBranches = async (options?: { includeInactive?: boolean }) => {
++  const db = await getDb();
++  if (!db) return options?.includeInactive ? defaultBranches : defaultBranches.filter((branch) => Number(branch.isActive) === 1);
++  const result = options?.includeInactive
++    ? await db.execute(sql`SELECT * FROM tas_branches ORDER BY isActive DESC, city ASC, name ASC, id ASC`)
++    : await db.execute(sql`SELECT * FROM tas_branches WHERE isActive = 1 ORDER BY city ASC, name ASC, id ASC`);
++  return (result as any)[0] ?? [];
++};
++
++export const createTASBranch = async (input: AnyRow) => {
++  const db = await getDb();
++  if (!db) return 0;
++  const name = String(input.name ?? "").trim();
++  if (!name) throw new Error("Branch name is required");
++  const schedule = branchScheduleFromInput(input);
++  const result = await db.execute(sql`
++    INSERT INTO tas_branches (
++      name, city, address, phone, workingHours, workingDaysJson,
++      capacityPerSlot, slotIntervalMinutes, workdayStartHour, workdayEndHour,
++      workdayStartMinutes, workdayEndMinutes, bookingStartMinutes, bookingEndMinutes,
++      endOfDayBufferMinutes, isActive
++    )
++    VALUES (
++      ${name}, ${input.city ?? null}, ${input.address ?? null}, ${input.phone ?? null}, ${schedule.workingHours}, ${JSON.stringify(schedule.workingDays)},
++      ${toNumber(input.capacityPerSlot, 1)}, ${schedule.slotIntervalMinutes}, ${Math.floor(schedule.workdayStartMinutes / 60)}, ${Math.ceil(schedule.workdayEndMinutes / 60)},
++      ${schedule.workdayStartMinutes}, ${schedule.workdayEndMinutes}, ${schedule.bookingStartMinutes}, ${schedule.bookingEndMinutes},
++      ${schedule.endOfDayBufferMinutes}, ${input.isActive === false || input.isActive === 0 ? 0 : 1}
++    )
++  `);
++  return Number((result as any)[0]?.insertId ?? 0);
++};
++
++export const updateTASBranch = async (branchId: number, input: AnyRow) => {
++  const db = await getDb();
++  if (!db) return false;
++  const existingResult = await db.execute(sql`SELECT * FROM tas_branches WHERE id = ${branchId} LIMIT 1`);
++  const existing = ((existingResult as any)[0] ?? [])[0];
++  if (!existing) throw new Error("Branch not found");
++  const name = String(input.name ?? existing.name ?? "").trim();
++  if (!name) throw new Error("Branch name is required");
++  const schedule = branchScheduleFromInput(input, existing);
++
++  await db.execute(sql`
++    UPDATE tas_branches
++    SET
++      name = ${name},
++      city = ${input.city ?? existing.city ?? null},
++      address = ${input.address ?? existing.address ?? null},
++      phone = ${input.phone ?? existing.phone ?? null},
++      workingHours = ${schedule.workingHours},
++      workingDaysJson = ${JSON.stringify(schedule.workingDays)},
++      slotIntervalMinutes = ${schedule.slotIntervalMinutes},
++      workdayStartHour = ${Math.floor(schedule.workdayStartMinutes / 60)},
++      workdayEndHour = ${Math.ceil(schedule.workdayEndMinutes / 60)},
++      workdayStartMinutes = ${schedule.workdayStartMinutes},
++      workdayEndMinutes = ${schedule.workdayEndMinutes},
++      bookingStartMinutes = ${schedule.bookingStartMinutes},
++      bookingEndMinutes = ${schedule.bookingEndMinutes},
++      endOfDayBufferMinutes = ${schedule.endOfDayBufferMinutes},
++      isActive = ${input.isActive === false || input.isActive === 0 ? 0 : 1}
++    WHERE id = ${branchId}
++  `);
++  return true;
++};
++
++export const getAvailableTASSlots = async (input: { day: Date; branchId?: number; serviceTypeId?: number }) => {
++  const db = await getDb();
++  const day = input.day instanceof Date ? input.day : new Date(input.day);
++  const date = day.toISOString().slice(0, 10);
++  const branches = await getTASBranches();
++  const branch = branches.find((item: AnyRow) => Number(item.id) === Number(input.branchId)) ?? branches[0];
++  if (!branch) return [];
++  const workingDays = normalizeWorkingDays(branch.workingDaysJson);
++  if (!workingDays.includes(day.getDay())) return [];
++
++  const serviceTypes = await getTASServiceTypes();
++  const serviceType = serviceTypes.find((item: AnyRow) => Number(item.id) === Number(input.serviceTypeId));
++  const durationMinutes = Math.max(15, toNumber(serviceType?.durationMinutes, 60));
++  const intervalMinutes = Math.max(15, toNumber(branch.slotIntervalMinutes, 30));
++  const capacity = Math.max(1, Math.min(toNumber(branch.capacityPerSlot, 1), toNumber(serviceType?.slotCapacity ?? serviceType?.defaultCapacityUnits, toNumber(branch.capacityPerSlot, 1))));
++  const workdayStartMinutes = toNumber(branch.workdayStartMinutes, toNumber(branch.workdayStartHour, 9) * 60);
++  const workdayEndMinutes = toNumber(branch.workdayEndMinutes, toNumber(branch.workdayEndHour, 18) * 60);
++  const bookingStartMinutes = Math.max(workdayStartMinutes, toNumber(branch.bookingStartMinutes, workdayStartMinutes));
++  const bookingEndMinutes = Math.min(workdayEndMinutes, toNumber(branch.bookingEndMinutes, workdayEndMinutes));
++  const endOfDayBufferMinutes = Math.max(0, toNumber(branch.endOfDayBufferMinutes, 60));
++  const serviceEndLimit = workdayEndMinutes - endOfDayBufferMinutes;
++  const latestStart = Math.min(bookingEndMinutes, serviceEndLimit - durationMinutes);
++  const slots = [];
++
++  for (let minutes = bookingStartMinutes; minutes <= latestStart; minutes += intervalMinutes) {
++    const startHour = Math.floor(minutes / 60);
++    const startMinute = minutes % 60;
++    const endTotal = minutes + durationMinutes;
++    const endHour = Math.floor(endTotal / 60);
++    const endMinute = endTotal % 60;
++    const startAt = `${date}T${String(startHour).padStart(2, "0")}:${String(startMinute).padStart(2, "0")}:00`;
++    const endAt = `${date}T${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}:00`;
++    let reserved = 0;
++    if (db) {
++      const countRows = await db.execute(sql`
++        SELECT COUNT(*) AS total
++        FROM tas_service_bookings
++        WHERE branchId = ${branch.id}
++          AND status NOT IN ('Cancelled','NoShow')
++          AND COALESCE(startAt, TIMESTAMP(preferredDate, preferredTime)) < ${new Date(endAt)}
++          AND COALESCE(endAt, DATE_ADD(COALESCE(startAt, TIMESTAMP(preferredDate, preferredTime)), INTERVAL ${sql.raw(String(durationMinutes))} MINUTE)) > ${new Date(startAt)}
++      `);
++      reserved = Number(((countRows as any)[0] ?? [])[0]?.total ?? 0);
++    }
++    slots.push({ startAt, endAt, availableCapacity: Math.max(0, capacity - reserved) });
++  }
++  return slots;
++};
+ 
+ export const getTASSparePartRequests = async (status?: string) => (await listTASPartsRequests({ status, limit: 100 })).map(mapPartRequest);
+ 
+diff --git a/server/routers.ts b/server/routers.ts
+--- a/server/routers.ts
++++ b/server/routers.ts
+@@ -314,9 +314,10 @@
+   simulateTASFinance,
+   getTASServiceTypes,
+   createTASServiceType,
+-  getTASBranches,
+-  createTASBranch,
+-  getTASSparePartRequests,
++  getTASBranches,
++  createTASBranch,
++  updateTASBranch,
++  getTASSparePartRequests,
+   createTASSparePartRequest,
+   updateTASSparePartRequest,
+   getTASAppointments,
+@@ -733,10 +734,11 @@
+     listVehicles: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASVehicles(input ?? {})),
+     createVehicle: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASVehicle(input ?? {}) })),
+   }),
+-  branches: router({
+-    list: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASBranches()),
+-    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
+-  }),
++  branches: router({
++    list: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASBranches({ includeInactive: Boolean(input?.includeInactive) })),
++    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
++    update: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASBranch(Number(input?.id ?? input?.branchId), input ?? {})),
++  }),
+   finance: router({
+     listPrograms: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASFinancePrograms(input?.vehicleId)),
+     createProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASFinanceProgram(input ?? {}) })),
+@@ -984,10 +986,11 @@
+     })),
+     removeImage: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ ctx, input }) => removeAutomotiveCatalogImage(Number(input?.vehicleId), Number(input?.imageId), ctx.user.id)),
+   }),
+-  branches: router({
+-    list: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASBranches()),
+-    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
+-  }),
++  branches: router({
++    list: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASBranches({ includeInactive: Boolean(input?.includeInactive) })),
++    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
++    update: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASBranch(Number(input?.id ?? input?.branchId), input ?? {})),
++  }),
+   finance: router({
+     listPrograms: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASFinancePrograms(input?.vehicleId)),
+     createProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASFinanceProgram(input ?? {}) })),
+diff --git a/shared/schema.ts b/shared/schema.ts
+--- a/shared/schema.ts
++++ b/shared/schema.ts
+@@ -1814,11 +1814,17 @@
+   city: varchar("city", { length: 120 }),
+   address: text("address"),
+   phone: varchar("phone", { length: 50 }),
+-  workingHours: text("workingHours"),
+-  capacityPerSlot: int("capacityPerSlot").notNull().default(2),
+-  slotIntervalMinutes: int("slotIntervalMinutes").notNull().default(30),
+-  workdayStartHour: int("workdayStartHour").notNull().default(9),
+-  workdayEndHour: int("workdayEndHour").notNull().default(18),
++  workingHours: text("workingHours"),
++  workingDaysJson: json("workingDaysJson"),
++  capacityPerSlot: int("capacityPerSlot").notNull().default(2),
++  slotIntervalMinutes: int("slotIntervalMinutes").notNull().default(30),
++  workdayStartHour: int("workdayStartHour").notNull().default(9),
++  workdayEndHour: int("workdayEndHour").notNull().default(18),
++  workdayStartMinutes: int("workdayStartMinutes").notNull().default(540),
++  workdayEndMinutes: int("workdayEndMinutes").notNull().default(1080),
++  bookingStartMinutes: int("bookingStartMinutes").notNull().default(540),
++  bookingEndMinutes: int("bookingEndMinutes").notNull().default(1020),
++  endOfDayBufferMinutes: int("endOfDayBufferMinutes").notNull().default(60),
+   isActive: tinyint("isActive").notNull().default(1),
+   createdAt: timestamp("createdAt", { mode: "string" }).notNull().defaultNow(),
+   updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow().onUpdateNow(),
+diff --git a/client/src/components/tas/TASBranchSchedulingSettings.tsx b/client/src/components/tas/TASBranchSchedulingSettings.tsx
+new file mode 100644
+--- /dev/null
++++ b/client/src/components/tas/TASBranchSchedulingSettings.tsx
+@@ -0,0 +1,363 @@
++import { useEffect, useMemo, useState } from 'react';
++import { Building2, CalendarDays, Clock3, Plus, Save, TimerReset } from 'lucide-react';
++import { toast } from 'sonner';
++import { SectionCard, FieldGroup, FieldLabel } from '@/components/tas/TASShared';
++import { useLanguage } from '@/contexts/LanguageContext';
++import { trpc } from '@/lib/trpc';
++import { Badge } from '@/components/ui/badge';
++import { Button } from '@/components/ui/button';
++import { Input } from '@/components/ui/input';
++import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
++import { Switch } from '@/components/ui/switch';
++
++const DAYS = [
++  { id: 0, en: 'Sun', ar: 'الأحد' },
++  { id: 1, en: 'Mon', ar: 'الإثنين' },
++  { id: 2, en: 'Tue', ar: 'الثلاثاء' },
++  { id: 3, en: 'Wed', ar: 'الأربعاء' },
++  { id: 4, en: 'Thu', ar: 'الخميس' },
++  { id: 5, en: 'Fri', ar: 'الجمعة' },
++  { id: 6, en: 'Sat', ar: 'السبت' },
++];
++
++function clampMinutes(value: unknown, fallback: number) {
++  const parsed = Number(value);
++  if (!Number.isFinite(parsed)) return fallback;
++  return Math.max(0, Math.min(1439, Math.round(parsed)));
++}
++
++function minutesToTime(value: unknown, fallback: number) {
++  const total = clampMinutes(value, fallback);
++  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
++}
++
++function timeToMinutes(value: string) {
++  const [hour, minute] = String(value || '').split(':').map(Number);
++  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return 0;
++  return Math.max(0, Math.min(1439, hour * 60 + minute));
++}
++
++function normalizeDays(value: unknown): number[] {
++  let source = value;
++  if (typeof source === 'string') {
++    try { source = JSON.parse(source); } catch { source = []; }
++  }
++  if (!Array.isArray(source)) return [0, 1, 2, 3, 4, 5, 6];
++  const days = Array.from(new Set(source.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)));
++  return days.length ? days : [0, 1, 2, 3, 4, 5, 6];
++}
++
++function draftFromBranch(branch?: any) {
++  const start = branch?.workdayStartMinutes ?? Number(branch?.workdayStartHour ?? 9) * 60;
++  const end = branch?.workdayEndMinutes ?? Number(branch?.workdayEndHour ?? 18) * 60;
++  return {
++    name: branch?.name ?? '',
++    city: branch?.city ?? '',
++    address: branch?.address ?? '',
++    phone: branch?.phone ?? '',
++    workdayStart: minutesToTime(start, 540),
++    workdayEnd: minutesToTime(end, 1080),
++    bookingStart: minutesToTime(branch?.bookingStartMinutes ?? start, 540),
++    bookingEnd: minutesToTime(branch?.bookingEndMinutes ?? Math.max(Number(start), Number(end) - 60), 1020),
++    slotIntervalMinutes: String(branch?.slotIntervalMinutes ?? 30),
++    endOfDayBufferMinutes: String(branch?.endOfDayBufferMinutes ?? 60),
++    workingDays: normalizeDays(branch?.workingDaysJson),
++    isActive: branch?.isActive === undefined ? true : Number(branch.isActive) === 1,
++  };
++}
++
++export default function TASBranchSchedulingSettings() {
++  const { isRTL } = useLanguage();
++  const utils = trpc.useUtils();
++  const branchesQ = trpc.tas.branches.list.useQuery({ includeInactive: true });
++  const branches = branchesQ.data ?? [];
++  const [selectedId, setSelectedId] = useState<string>('');
++  const selectedBranch = useMemo(
++    () => branches.find((branch: any) => String(branch.id) === selectedId),
++    [branches, selectedId],
++  );
++  const [draft, setDraft] = useState(() => draftFromBranch());
++
++  useEffect(() => {
++    if (!branchesQ.isSuccess) return;
++    if (!branches.length) {
++      if (selectedId !== 'new') setSelectedId('new');
++      return;
++    }
++    if (!selectedId) setSelectedId(String(branches[0].id));
++  }, [branchesQ.isSuccess, branches, selectedId]);
++
++  useEffect(() => {
++    if (selectedId === 'new') {
++      setDraft(draftFromBranch());
++      return;
++    }
++    if (selectedBranch) setDraft(draftFromBranch(selectedBranch));
++  }, [selectedId, selectedBranch]);
++
++  const refresh = async () => {
++    await utils.tas.branches.list.invalidate();
++    await utils.tas.service.getAvailableSlots.invalidate();
++  };
++
++  const createBranch = trpc.tas.branches.create.useMutation({
++    onSuccess: async (result: any) => {
++      toast.success(isRTL ? 'تم إنشاء الفرع وإعداد جدول التشغيل' : 'Branch schedule created');
++      await refresh();
++      if (result?.id) setSelectedId(String(result.id));
++    },
++    onError: (error) => toast.error(error.message || (isRTL ? 'تعذر إنشاء الفرع' : 'Could not create branch')),
++  });
++
++  const updateBranch = trpc.tas.branches.update.useMutation({
++    onSuccess: async () => {
++      toast.success(isRTL ? 'تم حفظ إعدادات الفرع' : 'Branch settings saved');
++      await refresh();
++    },
++    onError: (error) => toast.error(error.message || (isRTL ? 'تعذر حفظ الإعدادات' : 'Could not save settings')),
++  });
++
++  const toggleDay = (day: number) => {
++    setDraft((prev) => ({
++      ...prev,
++      workingDays: prev.workingDays.includes(day)
++        ? prev.workingDays.filter((item) => item !== day)
++        : [...prev.workingDays, day].sort((a, b) => a - b),
++    }));
++  };
++
++  const save = () => {
++    const workdayStartMinutes = timeToMinutes(draft.workdayStart);
++    const workdayEndMinutes = timeToMinutes(draft.workdayEnd);
++    const bookingStartMinutes = timeToMinutes(draft.bookingStart);
++    const bookingEndMinutes = timeToMinutes(draft.bookingEnd);
++    const endOfDayBufferMinutes = Number(draft.endOfDayBufferMinutes);
++
++    if (!draft.name.trim()) {
++      toast.error(isRTL ? 'اكتب اسم الفرع' : 'Branch name is required');
++      return;
++    }
++    if (!draft.workingDays.length) {
++      toast.error(isRTL ? 'اختر يوم عمل واحد على الأقل' : 'Select at least one working day');
++      return;
++    }
++    if (workdayStartMinutes >= workdayEndMinutes) {
++      toast.error(isRTL ? 'وقت نهاية العمل يجب أن يكون بعد وقت البداية' : 'Workday end must be after start');
++      return;
++    }
++    if (
++      bookingStartMinutes < workdayStartMinutes ||
++      bookingEndMinutes > workdayEndMinutes ||
++      bookingStartMinutes > bookingEndMinutes
++    ) {
++      toast.error(isRTL ? 'نافذة الحجز يجب أن تكون داخل ساعات العمل' : 'Booking window must stay inside working hours');
++      return;
++    }
++    if (workdayEndMinutes - endOfDayBufferMinutes <= workdayStartMinutes) {
++      toast.error(isRTL ? 'وقت الـBuffer أكبر من يوم العمل' : 'End-of-day buffer is too large');
++      return;
++    }
++
++    const payload = {
++      name: draft.name.trim(),
++      city: draft.city.trim() || null,
++      address: draft.address.trim() || null,
++      phone: draft.phone.trim() || null,
++      workingDaysJson: draft.workingDays,
++      workdayStartMinutes,
++      workdayEndMinutes,
++      bookingStartMinutes,
++      bookingEndMinutes,
++      slotIntervalMinutes: Number(draft.slotIntervalMinutes),
++      endOfDayBufferMinutes,
++      isActive: draft.isActive,
++    };
++
++    if (selectedId === 'new') createBranch.mutate(payload);
++    else updateBranch.mutate({ id: Number(selectedId), ...payload });
++  };
++
++  const busy = createBranch.isPending || updateBranch.isPending;
++
++  return (
++    <SectionCard
++      title={isRTL ? 'إعدادات تشغيل فروع الصيانة' : 'Service branch scheduling'}
++      subtitle={isRTL
++        ? 'تحكم في أيام وساعات العمل، نافذة الحجز، مدة الـSlot والوقت الاحتياطي لكل فرع.'
++        : 'Control working days, operating hours, booking window, slot interval, and daily buffer per branch.'}
++      right={(
++        <Button
++          variant="outline"
++          className="h-9 rounded-xl border-zinc-200 bg-white text-xs"
++          onClick={() => setSelectedId('new')}
++        >
++          <Plus size={14} className="me-1.5" />
++          {isRTL ? 'إضافة فرع' : 'Add branch'}
++        </Button>
++      )}
++    >
++      <div className="grid gap-5 lg:grid-cols-[0.72fr,1.45fr]">
++        <div className="space-y-2">
++          {branchesQ.isLoading ? (
++            <div className="rounded-2xl border border-dashed border-zinc-200 px-4 py-8 text-center text-sm text-zinc-400">
++              {isRTL ? 'جاري تحميل الفروع...' : 'Loading branches...'}
++            </div>
++          ) : branches.length === 0 ? (
++            <button
++              type="button"
++              onClick={() => setSelectedId('new')}
++              className="w-full rounded-2xl border border-dashed border-[#c99a2e]/40 bg-[#c99a2e]/5 p-5 text-start transition hover:bg-[#c99a2e]/10"
++            >
++              <Building2 size={22} className="mb-3 text-[#b7861f]" />
++              <div className="text-sm font-semibold text-zinc-800">{isRTL ? 'ابدأ بإضافة أول فرع صيانة' : 'Add your first service branch'}</div>
++              <div className="mt-1 text-xs leading-5 text-zinc-500">{isRTL ? 'لن يتم استخدام أي فروع افتراضية أو بيانات تجريبية.' : 'No demo or fallback branches will be used.'}</div>
++            </button>
++          ) : (
++            branches.map((branch: any) => {
++              const active = String(branch.id) === selectedId;
++              const start = branch.workdayStartMinutes ?? Number(branch.workdayStartHour ?? 9) * 60;
++              const end = branch.workdayEndMinutes ?? Number(branch.workdayEndHour ?? 18) * 60;
++              return (
++                <button
++                  type="button"
++                  key={branch.id}
++                  onClick={() => setSelectedId(String(branch.id))}
++                  className={`w-full rounded-2xl border p-4 text-start transition ${active ? 'border-[#c99a2e]/40 bg-[#fffaf0] shadow-sm' : 'border-zinc-100 bg-white hover:border-zinc-200 hover:bg-zinc-50/60'}`}
++                >
++                  <div className="flex items-start justify-between gap-3">
++                    <div>
++                      <div className="font-semibold text-zinc-800">{branch.name}</div>
++                      <div className="mt-1 text-xs text-zinc-400">{branch.city || (isRTL ? 'بدون مدينة' : 'No city')}</div>
++                    </div>
++                    <Badge variant="outline" className={Number(branch.isActive) === 1 ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-zinc-50 text-zinc-500'}>
++                      {Number(branch.isActive) === 1 ? (isRTL ? 'نشط' : 'Active') : (isRTL ? 'متوقف' : 'Inactive')}
++                    </Badge>
++                  </div>
++                  <div className="mt-3 flex items-center gap-2 text-xs text-zinc-500">
++                    <Clock3 size={13} />
++                    {minutesToTime(start, 540)} — {minutesToTime(end, 1080)}
++                    <span className="text-zinc-300">•</span>
++                    {branch.slotIntervalMinutes ?? 30} {isRTL ? 'دقيقة' : 'min'}
++                  </div>
++                </button>
++              );
++            })
++          )}
++        </div>
++
++        <div className="rounded-2xl border border-zinc-100 bg-gradient-to-b from-white to-zinc-50/40 p-5 shadow-sm">
++          <div className="mb-5 flex items-center justify-between gap-3">
++            <div>
++              <div className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
++                <Building2 size={16} className="text-[#b7861f]" />
++                {selectedId === 'new' ? (isRTL ? 'فرع جديد' : 'New branch') : (selectedBranch?.name || (isRTL ? 'إعدادات الفرع' : 'Branch settings'))}
++              </div>
++              <p className="mt-1 text-xs text-zinc-400">{isRTL ? 'كل القيم قابلة للتعديل لاحقًا من نفس الشاشة.' : 'All scheduling values remain editable from this screen.'}</p>
++            </div>
++            <div className="flex items-center gap-2">
++              <span className="text-xs text-zinc-500">{isRTL ? 'الفرع نشط' : 'Active'}</span>
++              <Switch checked={draft.isActive} onCheckedChange={(checked) => setDraft((prev) => ({ ...prev, isActive: checked }))} />
++            </div>
++          </div>
++
++          <div className="grid gap-3 md:grid-cols-2">
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'اسم الفرع' : 'Branch name'}</FieldLabel>
++              <Input className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.name} onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))} />
++            </FieldGroup>
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'المدينة' : 'City'}</FieldLabel>
++              <Input className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.city} onChange={(e) => setDraft((prev) => ({ ...prev, city: e.target.value }))} />
++            </FieldGroup>
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'الهاتف' : 'Phone'}</FieldLabel>
++              <Input className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.phone} onChange={(e) => setDraft((prev) => ({ ...prev, phone: e.target.value }))} />
++            </FieldGroup>
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'العنوان' : 'Address'}</FieldLabel>
++              <Input className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.address} onChange={(e) => setDraft((prev) => ({ ...prev, address: e.target.value }))} />
++            </FieldGroup>
++          </div>
++
++          <div className="my-5 h-px bg-zinc-100" />
++
++          <div className="mb-3 flex items-center gap-2">
++            <CalendarDays size={15} className="text-[#0a1f44]" />
++            <span className="text-xs font-semibold uppercase tracking-wide text-zinc-600">{isRTL ? 'أيام العمل' : 'Working days'}</span>
++          </div>
++          <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
++            {DAYS.map((day) => {
++              const active = draft.workingDays.includes(day.id);
++              return (
++                <button
++                  type="button"
++                  key={day.id}
++                  onClick={() => toggleDay(day.id)}
++                  className={`rounded-xl border px-2 py-2.5 text-xs font-medium transition ${active ? 'border-[#0a1f44] bg-[#0a1f44] text-white shadow-sm' : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50'}`}
++                >
++                  {isRTL ? day.ar : day.en}
++                </button>
++              );
++            })}
++          </div>
++
++          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'بداية العمل' : 'Work starts'}</FieldLabel>
++              <Input type="time" className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.workdayStart} onChange={(e) => setDraft((prev) => ({ ...prev, workdayStart: e.target.value }))} />
++            </FieldGroup>
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'نهاية العمل' : 'Work ends'}</FieldLabel>
++              <Input type="time" className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.workdayEnd} onChange={(e) => setDraft((prev) => ({ ...prev, workdayEnd: e.target.value }))} />
++            </FieldGroup>
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'أول موعد حجز' : 'First booking'}</FieldLabel>
++              <Input type="time" className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.bookingStart} onChange={(e) => setDraft((prev) => ({ ...prev, bookingStart: e.target.value }))} />
++            </FieldGroup>
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'آخر بداية حجز' : 'Last booking start'}</FieldLabel>
++              <Input type="time" className="h-10 rounded-xl border-zinc-200 bg-white" value={draft.bookingEnd} onChange={(e) => setDraft((prev) => ({ ...prev, bookingEnd: e.target.value }))} />
++            </FieldGroup>
++          </div>
++
++          <div className="mt-3 grid gap-3 md:grid-cols-2">
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'الفاصل بين الـSlots' : 'Slot interval'}</FieldLabel>
++              <Select value={draft.slotIntervalMinutes} onValueChange={(value) => setDraft((prev) => ({ ...prev, slotIntervalMinutes: value }))}>
++                <SelectTrigger className="h-10 rounded-xl border-zinc-200 bg-white"><SelectValue /></SelectTrigger>
++                <SelectContent>
++                  {[15, 30, 45, 60].map((value) => <SelectItem key={value} value={String(value)}>{value} {isRTL ? 'دقيقة' : 'minutes'}</SelectItem>)}
++                </SelectContent>
++              </Select>
++            </FieldGroup>
++            <FieldGroup>
++              <FieldLabel>{isRTL ? 'وقت احتياطي قبل نهاية اليوم' : 'End-of-day buffer'}</FieldLabel>
++              <Select value={draft.endOfDayBufferMinutes} onValueChange={(value) => setDraft((prev) => ({ ...prev, endOfDayBufferMinutes: value }))}>
++                <SelectTrigger className="h-10 rounded-xl border-zinc-200 bg-white"><SelectValue /></SelectTrigger>
++                <SelectContent>
++                  {[0, 30, 60, 90, 120].map((value) => <SelectItem key={value} value={String(value)}>{value} {isRTL ? 'دقيقة' : 'minutes'}</SelectItem>)}
++                </SelectContent>
++              </Select>
++            </FieldGroup>
++          </div>
++
++          <div className="mt-4 flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs leading-5 text-blue-800">
++            <TimerReset size={15} className="mt-0.5 shrink-0" />
++            <span>{isRTL
++              ? 'نافذة الحجز تحدد الأوقات التي يبدأ فيها الحجز. النظام سيحترم أيضًا مدة الصيانة والوقت الاحتياطي قبل نهاية اليوم عند حساب الـSlots.'
++              : 'The booking window controls allowed start times. Slot calculation also respects service duration and the end-of-day buffer.'}</span>
++          </div>
++
++          <Button
++            className="mt-5 w-full bg-[#0a1f44] text-white hover:bg-[#0d2550]"
++            disabled={busy}
++            onClick={save}
++          >
++            <Save size={14} className="me-2" />
++            {busy ? (isRTL ? 'جاري الحفظ...' : 'Saving...') : (isRTL ? 'حفظ إعدادات الفرع' : 'Save branch settings')}
++          </Button>
++        </div>
++      </div>
++    </SectionCard>
++  );
++}
+diff --git a/scripts/apply-tas-service-branch-scheduling-v1.ts b/scripts/apply-tas-service-branch-scheduling-v1.ts
+new file mode 100644
+--- /dev/null
++++ b/scripts/apply-tas-service-branch-scheduling-v1.ts
+@@ -0,0 +1,90 @@
++import "dotenv/config";
++import fs from "node:fs";
++import path from "node:path";
++import mysql from "mysql2/promise";
++
++const LOCK = "tas-service-branch-scheduling-v1";
++const STATE = path.join(process.cwd(), "storage", "migrations", "tas-service-branch-scheduling-v1-state.json");
++const COLUMNS = [
++  ["workingDaysJson", "JSON NULL AFTER workingHours"],
++  ["workdayStartMinutes", "INT NOT NULL DEFAULT 540 AFTER slotIntervalMinutes"],
++  ["workdayEndMinutes", "INT NOT NULL DEFAULT 1080 AFTER workdayStartMinutes"],
++  ["bookingStartMinutes", "INT NOT NULL DEFAULT 540 AFTER workdayEndMinutes"],
++  ["bookingEndMinutes", "INT NOT NULL DEFAULT 1020 AFTER bookingStartMinutes"],
++  ["endOfDayBufferMinutes", "INT NOT NULL DEFAULT 60 AFTER bookingEndMinutes"],
++] as const;
++
++async function main() {
++  if (!process.argv.includes("--apply")) throw new Error("Use --apply");
++  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
++  const db = await mysql.createConnection(process.env.DATABASE_URL);
++  let locked = false;
++  const state: { version: number; added: string[]; preexisting: string[] } = { version: 1, added: [], preexisting: [] };
++
++  const tableExists = async (name: string) => {
++    const [rows] = await db.execute<any[]>(
++      "SELECT COUNT(*) c FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?",
++      [name],
++    );
++    return Number(rows?.[0]?.c ?? 0) > 0;
++  };
++  const columnExists = async (name: string) => {
++    const [rows] = await db.execute<any[]>(
++      "SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tas_branches' AND COLUMN_NAME=?",
++      [name],
++    );
++    return Number(rows?.[0]?.c ?? 0) > 0;
++  };
++  const persist = () => {
++    fs.mkdirSync(path.dirname(STATE), { recursive: true });
++    fs.writeFileSync(STATE, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
++  };
++
++  try {
++    for (const table of ["tas_branches", "tas_service_types", "tas_service_bookings"]) {
++      if (!(await tableExists(table))) throw new Error(`Required table missing: ${table}`);
++    }
++    const [lockRows] = await db.query<any[]>("SELECT GET_LOCK(?, 10) acquired", [LOCK]);
++    locked = Number(lockRows?.[0]?.acquired ?? 0) === 1;
++    if (!locked) throw new Error("Could not acquire migration lock");
++
++    for (const [name, definition] of COLUMNS) {
++      if (await columnExists(name)) {
++        state.preexisting.push(name);
++        persist();
++        continue;
++      }
++      await db.query(`ALTER TABLE tas_branches ADD COLUMN \`${name}\` ${definition}`);
++      state.added.push(name);
++      persist();
++      if (name === "workingDaysJson") {
++        await db.query("UPDATE tas_branches SET workingDaysJson=JSON_ARRAY(0,1,2,3,4,5,6) WHERE workingDaysJson IS NULL");
++      } else if (name === "workdayStartMinutes") {
++        await db.query("UPDATE tas_branches SET workdayStartMinutes=COALESCE(workdayStartHour,9)*60");
++      } else if (name === "workdayEndMinutes") {
++        await db.query("UPDATE tas_branches SET workdayEndMinutes=COALESCE(workdayEndHour,18)*60");
++      } else if (name === "bookingStartMinutes") {
++        await db.query("UPDATE tas_branches SET bookingStartMinutes=COALESCE(workdayStartMinutes,COALESCE(workdayStartHour,9)*60)");
++      } else if (name === "bookingEndMinutes") {
++        await db.query("UPDATE tas_branches SET bookingEndMinutes=GREATEST(COALESCE(workdayStartMinutes,540),COALESCE(workdayEndMinutes,1080)-60)");
++      }
++    }
++
++    console.log("TAS_SERVICE_BRANCH_SCHEDULING_MIGRATION=PASS");
++    console.log("ADDED_COLUMNS=" + (state.added.join(",") || "NONE"));
++    console.log("PREEXISTING_COLUMNS=" + (state.preexisting.join(",") || "NONE"));
++    console.log("ERROR=NONE");
++  } catch (error) {
++    persist();
++    throw error;
++  } finally {
++    if (locked) await db.query("SELECT RELEASE_LOCK(?)", [LOCK]).catch(() => undefined);
++    await db.end();
++  }
++}
++
++main().catch((error) => {
++  console.error("TAS_SERVICE_BRANCH_SCHEDULING_MIGRATION=FAIL");
++  console.error("ERROR=" + (error instanceof Error ? error.message : String(error)));
++  process.exit(1);
++});
+diff --git a/scripts/verify-tas-service-branch-scheduling-v1.ts b/scripts/verify-tas-service-branch-scheduling-v1.ts
+new file mode 100644
+--- /dev/null
++++ b/scripts/verify-tas-service-branch-scheduling-v1.ts
+@@ -0,0 +1,59 @@
++import "dotenv/config";
++import fs from "node:fs";
++import path from "node:path";
++import mysql from "mysql2/promise";
++
++const STATE = path.join(process.cwd(), "storage", "migrations", "tas-service-branch-scheduling-v1-state.json");
++const REQUIRED = ["workingDaysJson","workdayStartMinutes","workdayEndMinutes","bookingStartMinutes","bookingEndMinutes","endOfDayBufferMinutes"];
++
++async function main() {
++  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
++  const rolledBack = process.argv.includes("--rolled-back");
++  const db = await mysql.createConnection(process.env.DATABASE_URL);
++  try {
++    const [rows] = await db.query<any[]>(
++      "SELECT COLUMN_NAME name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tas_branches'",
++    );
++    const columns = new Set(rows.map((row) => String(row.name)));
++
++    if (rolledBack) {
++      const state = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, "utf8")) : { added: [], preexisting: [] };
++      for (const name of state.added ?? []) {
++        if (columns.has(name)) throw new Error(`Rollback left added column: ${name}`);
++      }
++      for (const name of state.preexisting ?? []) {
++        if (!columns.has(name)) throw new Error(`Rollback removed preexisting column: ${name}`);
++      }
++      console.log("TAS_SERVICE_BRANCH_SCHEDULING_ROLLBACK_VERIFY=PASS");
++      return;
++    }
++
++    for (const name of REQUIRED) {
++      if (!columns.has(name)) throw new Error(`Missing branch scheduling column: ${name}`);
++    }
++    const [invalid] = await db.query<any[]>(`
++      SELECT COUNT(*) c
++      FROM tas_branches
++      WHERE workdayStartMinutes < 0 OR workdayStartMinutes >= 1440
++         OR workdayEndMinutes <= workdayStartMinutes OR workdayEndMinutes > 1440
++         OR bookingStartMinutes < workdayStartMinutes
++         OR bookingEndMinutes < bookingStartMinutes
++         OR bookingEndMinutes > workdayEndMinutes
++         OR slotIntervalMinutes < 15
++         OR endOfDayBufferMinutes < 0
++         OR endOfDayBufferMinutes >= (workdayEndMinutes-workdayStartMinutes)
++    `);
++    if (Number(invalid?.[0]?.c ?? 0) > 0) throw new Error("Invalid branch scheduling rows detected");
++    const [counts] = await db.query<any[]>("SELECT COUNT(*) branches FROM tas_branches");
++    console.log("TAS_SERVICE_BRANCH_SCHEDULING_VERIFY=PASS");
++    console.log("BRANCH_ROWS=" + Number(counts?.[0]?.branches ?? 0));
++    console.log("ERROR=NONE");
++  } finally {
++    await db.end();
++  }
++}
++main().catch((error) => {
++  console.error("TAS_SERVICE_BRANCH_SCHEDULING_VERIFY=FAIL");
++  console.error("ERROR=" + (error instanceof Error ? error.message : String(error)));
++  process.exit(1);
++});
+diff --git a/scripts/rollback-tas-service-branch-scheduling-v1.ts b/scripts/rollback-tas-service-branch-scheduling-v1.ts
+new file mode 100644
+--- /dev/null
++++ b/scripts/rollback-tas-service-branch-scheduling-v1.ts
+@@ -0,0 +1,39 @@
++import "dotenv/config";
++import fs from "node:fs";
++import path from "node:path";
++import mysql from "mysql2/promise";
++
++const STATE = path.join(process.cwd(), "storage", "migrations", "tas-service-branch-scheduling-v1-state.json");
++
++async function main() {
++  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
++  if (!fs.existsSync(STATE)) {
++    console.log("TAS_SERVICE_BRANCH_SCHEDULING_ROLLBACK=PASS");
++    console.log("DROPPED_COLUMNS=NONE");
++    return;
++  }
++  const state = JSON.parse(fs.readFileSync(STATE, "utf8"));
++  const added = Array.isArray(state.added) ? [...state.added].reverse() : [];
++  const db = await mysql.createConnection(process.env.DATABASE_URL);
++  const dropped: string[] = [];
++  try {
++    for (const name of added) {
++      const [rows] = await db.execute<any[]>(
++        "SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tas_branches' AND COLUMN_NAME=?",
++        [name],
++      );
++      if (Number(rows?.[0]?.c ?? 0) === 0) continue;
++      await db.query(`ALTER TABLE tas_branches DROP COLUMN \`${name}\``);
++      dropped.push(name);
++    }
++    console.log("TAS_SERVICE_BRANCH_SCHEDULING_ROLLBACK=PASS");
++    console.log("DROPPED_COLUMNS=" + (dropped.join(",") || "NONE"));
++  } finally {
++    await db.end();
++  }
++}
++main().catch((error) => {
++  console.error("TAS_SERVICE_BRANCH_SCHEDULING_ROLLBACK=FAIL");
++  console.error("ERROR=" + (error instanceof Error ? error.message : String(error)));
++  process.exit(1);
++});
