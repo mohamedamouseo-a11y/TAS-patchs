@@ -889,3 +889,30 @@ new file mode 100644
 +  console.error("ERROR=" + (error instanceof Error ? error.message : String(error)));
 +  process.exit(1);
 +});
+diff --git a/server/routers.ts b/server/routers.ts
+--- a/server/routers.ts
++++ b/server/routers.ts
+@@ -743,12 +743,17 @@
+     updateProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASFinanceProgram(Number(input?.id ?? input?.programId), input ?? {})),
+     simulate: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => simulateTASFinance(input ?? {})),
+   }),
+-  service: router({
+-    listTypes: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASServiceTypes()),
+-    createType: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASServiceType(input ?? {}) })),
+-    listAppointments: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASAppointments(input ?? {})),
+-    createAppointment: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ ctx, input }) => ({ id: await createTASAppointment({ ...(input ?? {}), createdByUserId: ctx.user.id }) })),
+-  }),
++  service: router({
++    listTypes: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASServiceTypes()),
++    createType: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASServiceType(input ?? {}) })),
++    listAppointments: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASAppointments(input ?? {})),
++    createAppointment: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ ctx, input }) => ({ id: await createTASAppointment({ ...(input ?? {}), createdByUserId: ctx.user.id }) })),
++    getAvailableSlots: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getAvailableTASSlots({
++      day: input?.day ? new Date(input.day) : new Date(),
++      branchId: input?.branchId,
++      serviceTypeId: input?.serviceTypeId,
++    })),
++  }),
+   afterSales: router({
+     listPartRequests: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASSparePartRequests(input?.status)),
+     createPartRequest: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ ctx, input }) => ({ id: await createTASSparePartRequest({ ...(input ?? {}), createdByUserId: ctx.user.id }) })),
