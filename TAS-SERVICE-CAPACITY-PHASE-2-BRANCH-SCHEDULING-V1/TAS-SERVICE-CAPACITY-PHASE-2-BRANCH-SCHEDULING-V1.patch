@@ -243,55 +243,6 @@ diff --git a/server/tasDb.ts b/server/tasDb.ts
  
  export const getTASSparePartRequests = async (status?: string) => (await listTASPartsRequests({ status, limit: 100 })).map(mapPartRequest);
  
-diff --git a/server/routers.ts b/server/routers.ts
---- a/server/routers.ts
-+++ b/server/routers.ts
-@@ -314,9 +314,10 @@
-   simulateTASFinance,
-   getTASServiceTypes,
-   createTASServiceType,
--  getTASBranches,
--  createTASBranch,
--  getTASSparePartRequests,
-+  getTASBranches,
-+  createTASBranch,
-+  updateTASBranch,
-+  getTASSparePartRequests,
-   createTASSparePartRequest,
-   updateTASSparePartRequest,
-   getTASAppointments,
-@@ -733,10 +734,11 @@
-     listVehicles: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASVehicles(input ?? {})),
-     createVehicle: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASVehicle(input ?? {}) })),
-   }),
--  branches: router({
--    list: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASBranches()),
--    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
--  }),
-+  branches: router({
-+    list: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASBranches({ includeInactive: Boolean(input?.includeInactive) })),
-+    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
-+    update: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASBranch(Number(input?.id ?? input?.branchId), input ?? {})),
-+  }),
-   finance: router({
-     listPrograms: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASFinancePrograms(input?.vehicleId)),
-     createProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASFinanceProgram(input ?? {}) })),
-@@ -984,10 +986,11 @@
-     })),
-     removeImage: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ ctx, input }) => removeAutomotiveCatalogImage(Number(input?.vehicleId), Number(input?.imageId), ctx.user.id)),
-   }),
--  branches: router({
--    list: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASBranches()),
--    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
--  }),
-+  branches: router({
-+    list: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASBranches({ includeInactive: Boolean(input?.includeInactive) })),
-+    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
-+    update: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASBranch(Number(input?.id ?? input?.branchId), input ?? {})),
-+  }),
-   finance: router({
-     listPrograms: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASFinancePrograms(input?.vehicleId)),
-     createProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASFinanceProgram(input ?? {}) })),
 diff --git a/shared/schema.ts b/shared/schema.ts
 --- a/shared/schema.ts
 +++ b/shared/schema.ts
@@ -690,7 +641,7 @@ diff --git a/scripts/apply-tas-service-branch-scheduling-v1.ts b/scripts/apply-t
 new file mode 100644
 --- /dev/null
 +++ b/scripts/apply-tas-service-branch-scheduling-v1.ts
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,96 @@
 +import "dotenv/config";
 +import fs from "node:fs";
 +import path from "node:path";
@@ -711,6 +662,12 @@ new file mode 100644
 +  if (!process.argv.includes("--apply")) throw new Error("Use --apply");
 +  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 +  const db = await mysql.createConnection(process.env.DATABASE_URL);
++  const [databaseRows] = await db.query<any[]>("SELECT DATABASE() db");
++  const databaseName = String(databaseRows?.[0]?.db ?? "");
++  if (databaseName !== "tas_crm") {
++    await db.end();
++    throw new Error(`Refusing unexpected database: ${databaseName || "<none>"}`);
++  }
 +  let locked = false;
 +  const state: { version: number; added: string[]; preexisting: string[] } = { version: 1, added: [], preexisting: [] };
 +
@@ -888,11 +845,40 @@ new file mode 100644
 +  console.error("TAS_SERVICE_BRANCH_SCHEDULING_ROLLBACK=FAIL");
 +  console.error("ERROR=" + (error instanceof Error ? error.message : String(error)));
 +  process.exit(1);
-+});
-diff --git a/server/routers.ts b/server/routers.ts
++});diff --git a/server/routers.ts b/server/routers.ts
 --- a/server/routers.ts
 +++ b/server/routers.ts
-@@ -743,12 +743,17 @@
+@@ -314,9 +314,10 @@
+   simulateTASFinance,
+   getTASServiceTypes,
+   createTASServiceType,
+-  getTASBranches,
+-  createTASBranch,
+-  getTASSparePartRequests,
++  getTASBranches,
++  createTASBranch,
++  updateTASBranch,
++  getTASSparePartRequests,
+   createTASSparePartRequest,
+   updateTASSparePartRequest,
+   getTASAppointments,
+@@ -733,10 +734,11 @@
+     listVehicles: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASVehicles(input ?? {})),
+     createVehicle: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASVehicle(input ?? {}) })),
+   }),
+-  branches: router({
+-    list: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASBranches()),
+-    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
+-  }),
++  branches: router({
++    list: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASBranches({ includeInactive: Boolean(input?.includeInactive) })),
++    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
++    update: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASBranch(Number(input?.id ?? input?.branchId), input ?? {})),
++  }),
+   finance: router({
+     listPrograms: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASFinancePrograms(input?.vehicleId)),
+     createProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASFinanceProgram(input ?? {}) })),
+@@ -743,12 +745,17 @@
      updateProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASFinanceProgram(Number(input?.id ?? input?.programId), input ?? {})),
      simulate: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => simulateTASFinance(input ?? {})),
    }),
@@ -916,3 +902,19 @@ diff --git a/server/routers.ts b/server/routers.ts
    afterSales: router({
      listPartRequests: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASSparePartRequests(input?.status)),
      createPartRequest: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ ctx, input }) => ({ id: await createTASSparePartRequest({ ...(input ?? {}), createdByUserId: ctx.user.id }) })),
+@@ -984,10 +991,11 @@
+     })),
+     removeImage: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ ctx, input }) => removeAutomotiveCatalogImage(Number(input?.vehicleId), Number(input?.imageId), ctx.user.id)),
+   }),
+-  branches: router({
+-    list: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASBranches()),
+-    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
+-  }),
++  branches: router({
++    list: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASBranches({ includeInactive: Boolean(input?.includeInactive) })),
++    create: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASBranch(input ?? {}) })),
++    update: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASBranch(Number(input?.id ?? input?.branchId), input ?? {})),
++  }),
+   finance: router({
+     listPrograms: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => getTASFinancePrograms(input?.vehicleId)),
+     createProgram: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASFinanceProgram(input ?? {}) })),
