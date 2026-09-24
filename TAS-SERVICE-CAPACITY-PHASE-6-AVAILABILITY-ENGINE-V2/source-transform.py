@@ -99,6 +99,7 @@ for rel in [
     "scripts/apply-tas-availability-engine-v2.ts",
     "scripts/verify-tas-availability-engine-v2.ts",
     "scripts/rollback-tas-availability-engine-v2.ts",
+    "scripts/verify-tas-availability-engine-v2-runtime.ts",
 ]:
     copy_payload(rel)
 
