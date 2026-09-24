@@ -1,0 +1,274 @@
+const normalizeMaintenanceMappingText = (value: unknown, max = 120) => {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, max) : null;
+};
+
+const normalizeMaintenanceMappingYear = (value: unknown) => {
+  if (value === undefined || value === null || value === "") return null;
+  const year = Math.trunc(Number(value));
+  if (!Number.isInteger(year) || year < 0 || year > 9999) throw new Error("Year must be between 0 and 9999");
+  return year;
+};
+
+export const listTASMaintenanceVehicleMappings = async (input?: { vehicleId?: number; planId?: number; includeInactive?: boolean }) => {
+  const db = await getDb();
+  if (!db) return [];
+
+  const vehicleId = Number(input?.vehicleId ?? 0);
+  const planId = Number(input?.planId ?? 0);
+
+  if (vehicleId > 0 && planId > 0) {
+    const result = input?.includeInactive
+      ? await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+          FROM tas_maintenance_vehicle_mappings m
+          JOIN tas_vehicles v ON v.id=m.vehicleId
+          JOIN tas_maintenance_plans p ON p.id=m.planId
+          WHERE m.vehicleId=${vehicleId} AND m.planId=${planId}
+          ORDER BY m.isActive DESC, m.sortOrder ASC, m.id ASC`)
+      : await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+          FROM tas_maintenance_vehicle_mappings m
+          JOIN tas_vehicles v ON v.id=m.vehicleId
+          JOIN tas_maintenance_plans p ON p.id=m.planId
+          WHERE m.vehicleId=${vehicleId} AND m.planId=${planId} AND m.isActive=1
+          ORDER BY m.sortOrder ASC, m.id ASC`);
+    return (result as any)[0] ?? [];
+  }
+
+  if (vehicleId > 0) {
+    const result = input?.includeInactive
+      ? await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+          FROM tas_maintenance_vehicle_mappings m
+          JOIN tas_vehicles v ON v.id=m.vehicleId
+          JOIN tas_maintenance_plans p ON p.id=m.planId
+          WHERE m.vehicleId=${vehicleId}
+          ORDER BY m.isActive DESC, m.sortOrder ASC, m.id ASC`)
+      : await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+          FROM tas_maintenance_vehicle_mappings m
+          JOIN tas_vehicles v ON v.id=m.vehicleId
+          JOIN tas_maintenance_plans p ON p.id=m.planId
+          WHERE m.vehicleId=${vehicleId} AND m.isActive=1
+          ORDER BY m.sortOrder ASC, m.id ASC`);
+    return (result as any)[0] ?? [];
+  }
+
+  if (planId > 0) {
+    const result = input?.includeInactive
+      ? await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+          FROM tas_maintenance_vehicle_mappings m
+          JOIN tas_vehicles v ON v.id=m.vehicleId
+          JOIN tas_maintenance_plans p ON p.id=m.planId
+          WHERE m.planId=${planId}
+          ORDER BY m.isActive DESC, m.sortOrder ASC, v.brand ASC, v.model ASC, m.id ASC`)
+      : await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+          FROM tas_maintenance_vehicle_mappings m
+          JOIN tas_vehicles v ON v.id=m.vehicleId
+          JOIN tas_maintenance_plans p ON p.id=m.planId
+          WHERE m.planId=${planId} AND m.isActive=1
+          ORDER BY m.sortOrder ASC, v.brand ASC, v.model ASC, m.id ASC`);
+    return (result as any)[0] ?? [];
+  }
+
+  const result = input?.includeInactive
+    ? await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+        FROM tas_maintenance_vehicle_mappings m
+        JOIN tas_vehicles v ON v.id=m.vehicleId
+        JOIN tas_maintenance_plans p ON p.id=m.planId
+        ORDER BY m.isActive DESC, m.sortOrder ASC, v.brand ASC, v.model ASC, m.id ASC`)
+    : await db.execute(sql`SELECT m.*, v.brand vehicleBrand, v.model vehicleModel, v.year vehicleYear, p.name planName, p.code planCode
+        FROM tas_maintenance_vehicle_mappings m
+        JOIN tas_vehicles v ON v.id=m.vehicleId
+        JOIN tas_maintenance_plans p ON p.id=m.planId
+        WHERE m.isActive=1
+        ORDER BY m.sortOrder ASC, v.brand ASC, v.model ASC, m.id ASC`);
+  return (result as any)[0] ?? [];
+};
+
+const assertTASMaintenanceVehicle = async (db: any, vehicleId: number) => {
+  const rows = await db.execute(sql`SELECT id FROM tas_vehicles WHERE id=${vehicleId} LIMIT 1`);
+  if (!(((rows as any)[0] ?? [])[0])) throw new Error("Vehicle not found");
+};
+
+const assertTASMaintenanceMappingPlan = async (db: any, planId: number) => {
+  const rows = await db.execute(sql`SELECT id FROM tas_maintenance_plans WHERE id=${planId} LIMIT 1`);
+  if (!(((rows as any)[0] ?? [])[0])) throw new Error("Maintenance plan not found");
+};
+
+const assertUniqueTASMaintenanceVehicleMapping = async (
+  db: any,
+  input: { vehicleId: number; planId: number; powertrain: string | null; variant: string | null; yearFrom: number | null; yearTo: number | null },
+  excludeId?: number,
+) => {
+  const exclude = excludeId ? sql`AND id <> ${excludeId}` : sql``;
+  const rows = await db.execute(sql`
+    SELECT id
+    FROM tas_maintenance_vehicle_mappings
+    WHERE vehicleId=${input.vehicleId}
+      AND planId=${input.planId}
+      AND LOWER(COALESCE(powertrain,''))=LOWER(COALESCE(${input.powertrain},''))
+      AND LOWER(COALESCE(variant,''))=LOWER(COALESCE(${input.variant},''))
+      AND COALESCE(yearFrom,-1)=COALESCE(${input.yearFrom},-1)
+      AND COALESCE(yearTo,-1)=COALESCE(${input.yearTo},-1)
+      ${exclude}
+    LIMIT 1
+  `);
+  if (((rows as any)[0] ?? []).length) throw new Error("An identical vehicle maintenance mapping already exists");
+};
+
+export const createTASMaintenanceVehicleMapping = async (input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const vehicleId = Number(input.vehicleId ?? 0);
+  const planId = Number(input.planId ?? 0);
+  if (!Number.isInteger(vehicleId) || vehicleId <= 0) throw new Error("Valid vehicleId is required");
+  if (!Number.isInteger(planId) || planId <= 0) throw new Error("Valid planId is required");
+
+  await assertTASMaintenanceVehicle(db, vehicleId);
+  await assertTASMaintenanceMappingPlan(db, planId);
+
+  const powertrain = normalizeMaintenanceMappingText(input.powertrain);
+  const variant = normalizeMaintenanceMappingText(input.variant);
+  const yearFrom = normalizeMaintenanceMappingYear(input.yearFrom);
+  const yearTo = normalizeMaintenanceMappingYear(input.yearTo);
+  if (yearFrom !== null && yearTo !== null && yearTo < yearFrom) throw new Error("yearTo must be greater than or equal to yearFrom");
+
+  await assertUniqueTASMaintenanceVehicleMapping(db, { vehicleId, planId, powertrain, variant, yearFrom, yearTo });
+
+  const notes = normalizeMaintenanceMappingText(input.notes, 4000);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, 0))));
+  const isActive = input.isActive === false || input.isActive === 0 ? 0 : 1;
+
+  const result = await db.execute(sql`
+    INSERT INTO tas_maintenance_vehicle_mappings
+      (vehicleId, planId, powertrain, variant, yearFrom, yearTo, notes, sortOrder, isActive)
+    VALUES
+      (${vehicleId}, ${planId}, ${powertrain}, ${variant}, ${yearFrom}, ${yearTo}, ${notes}, ${sortOrder}, ${isActive})
+  `);
+  return Number((result as any)[0]?.insertId ?? 0);
+};
+
+export const updateTASMaintenanceVehicleMapping = async (mappingId: number, input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return false;
+  if (!Number.isInteger(mappingId) || mappingId <= 0) throw new Error("Valid mapping id is required");
+
+  const existingRows = await db.execute(sql`SELECT * FROM tas_maintenance_vehicle_mappings WHERE id=${mappingId} LIMIT 1`);
+  const existing = ((existingRows as any)[0] ?? [])[0];
+  if (!existing) throw new Error("Maintenance vehicle mapping not found");
+
+  const vehicleId = Number(input.vehicleId ?? existing.vehicleId);
+  const planId = Number(input.planId ?? existing.planId);
+  if (!Number.isInteger(vehicleId) || vehicleId <= 0) throw new Error("Valid vehicleId is required");
+  if (!Number.isInteger(planId) || planId <= 0) throw new Error("Valid planId is required");
+
+  await assertTASMaintenanceVehicle(db, vehicleId);
+  await assertTASMaintenanceMappingPlan(db, planId);
+
+  const powertrain = input.powertrain !== undefined ? normalizeMaintenanceMappingText(input.powertrain) : normalizeMaintenanceMappingText(existing.powertrain);
+  const variant = input.variant !== undefined ? normalizeMaintenanceMappingText(input.variant) : normalizeMaintenanceMappingText(existing.variant);
+  const yearFrom = input.yearFrom !== undefined ? normalizeMaintenanceMappingYear(input.yearFrom) : normalizeMaintenanceMappingYear(existing.yearFrom);
+  const yearTo = input.yearTo !== undefined ? normalizeMaintenanceMappingYear(input.yearTo) : normalizeMaintenanceMappingYear(existing.yearTo);
+  if (yearFrom !== null && yearTo !== null && yearTo < yearFrom) throw new Error("yearTo must be greater than or equal to yearFrom");
+
+  await assertUniqueTASMaintenanceVehicleMapping(db, { vehicleId, planId, powertrain, variant, yearFrom, yearTo }, mappingId);
+
+  const notes = input.notes !== undefined ? normalizeMaintenanceMappingText(input.notes, 4000) : normalizeMaintenanceMappingText(existing.notes, 4000);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, existing.sortOrder ?? 0))));
+  const isActive = input.isActive === undefined
+    ? (Number(existing.isActive) === 1 ? 1 : 0)
+    : (input.isActive === false || input.isActive === 0 ? 0 : 1);
+
+  await db.execute(sql`
+    UPDATE tas_maintenance_vehicle_mappings
+    SET vehicleId=${vehicleId}, planId=${planId}, powertrain=${powertrain}, variant=${variant},
+        yearFrom=${yearFrom}, yearTo=${yearTo}, notes=${notes}, sortOrder=${sortOrder},
+        isActive=${isActive}, updatedAt=CURRENT_TIMESTAMP
+    WHERE id=${mappingId}
+  `);
+  return true;
+};
+
+const normalizedResolverText = (value: unknown) => String(value ?? "").trim().toLowerCase();
+
+export const resolveTASMaintenanceMileage = async (input: {
+  vehicleId: number;
+  mileageKm: number;
+  powertrain?: string;
+  variant?: string;
+  year?: number;
+}) => {
+  const db = await getDb();
+  if (!db) return { vehicle: null, mapping: null, ambiguous: false, candidates: [], exactInterval: null, previousInterval: null, nextInterval: null };
+
+  const vehicleId = Number(input.vehicleId ?? 0);
+  const mileageKm = Math.trunc(Number(input.mileageKm));
+  if (!Number.isInteger(vehicleId) || vehicleId <= 0) throw new Error("Valid vehicleId is required");
+  if (!Number.isInteger(mileageKm) || mileageKm < 0 || mileageKm > 2000000) throw new Error("Mileage must be between 0 and 2000000 km");
+
+  const vehicleRows = await db.execute(sql`SELECT * FROM tas_vehicles WHERE id=${vehicleId} LIMIT 1`);
+  const vehicle = ((vehicleRows as any)[0] ?? [])[0] ?? null;
+  if (!vehicle) throw new Error("Vehicle not found");
+
+  const mappingRows = await db.execute(sql`
+    SELECT m.*, p.name planName, p.code planCode
+    FROM tas_maintenance_vehicle_mappings m
+    JOIN tas_maintenance_plans p ON p.id=m.planId
+    WHERE m.vehicleId=${vehicleId} AND m.isActive=1 AND p.isActive=1
+    ORDER BY m.sortOrder ASC, m.id ASC
+  `);
+  let candidates = ((mappingRows as any)[0] ?? []) as AnyRow[];
+
+  const resolvedYear = input.year == null ? (vehicle.year == null ? null : Number(vehicle.year)) : Number(input.year);
+  if (resolvedYear !== null && Number.isFinite(resolvedYear)) {
+    candidates = candidates.filter((row) =>
+      (row.yearFrom == null || Number(row.yearFrom) <= resolvedYear) &&
+      (row.yearTo == null || Number(row.yearTo) >= resolvedYear)
+    );
+  }
+
+  const requestedPowertrain = normalizedResolverText(input.powertrain);
+  if (requestedPowertrain) {
+    candidates = candidates.filter((row) => normalizedResolverText(row.powertrain) === requestedPowertrain);
+  } else {
+    const defaults = candidates.filter((row) => !normalizedResolverText(row.powertrain));
+    if (defaults.length) candidates = defaults;
+  }
+
+  const requestedVariant = normalizedResolverText(input.variant);
+  if (requestedVariant) {
+    candidates = candidates.filter((row) => normalizedResolverText(row.variant) === requestedVariant);
+  } else {
+    const defaults = candidates.filter((row) => !normalizedResolverText(row.variant));
+    if (defaults.length) candidates = defaults;
+  }
+
+  if (candidates.length !== 1) {
+    return {
+      vehicle,
+      mapping: null,
+      ambiguous: candidates.length > 1,
+      candidates,
+      exactInterval: null,
+      previousInterval: null,
+      nextInterval: null,
+    };
+  }
+
+  const mapping = candidates[0];
+  const intervals = await listTASMaintenanceIntervals({ planId: Number(mapping.planId), includeInactive: false });
+
+  const exactInterval = intervals.find((row: AnyRow) => Number(row.mileageKm) === mileageKm) ?? null;
+  const previousRows = intervals.filter((row: AnyRow) => Number(row.mileageKm) < mileageKm);
+  const previousInterval = previousRows.length ? previousRows[previousRows.length - 1] : null;
+  const nextInterval = intervals.find((row: AnyRow) => Number(row.mileageKm) > mileageKm) ?? null;
+
+  return {
+    vehicle,
+    mapping,
+    ambiguous: false,
+    candidates: [mapping],
+    exactInterval,
+    previousInterval,
+    nextInterval,
+  };
+};
