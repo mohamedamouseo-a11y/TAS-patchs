@@ -1,0 +1,218 @@
+export const selectTASAutoBayCandidateForLoad = (input: {
+  activeBayIds: number[];
+  occupiedBayIds: number[];
+  legacyUnassignedLoad: number;
+}) => {
+  const seen = new Set<number>();
+  const activeBayIds = input.activeBayIds
+    .map(Number)
+    .filter((id) => Number.isInteger(id) && id > 0 && !seen.has(id) && (seen.add(id), true));
+
+  const activeSet = new Set(activeBayIds);
+  const occupiedSet = new Set(
+    input.occupiedBayIds
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && activeSet.has(id)),
+  );
+
+  const freeBayIds = activeBayIds.filter((id) => !occupiedSet.has(id));
+  const legacyUnassignedLoad = Math.max(0, Math.trunc(Number(input.legacyUnassignedLoad) || 0));
+  const shadowReservedCount = Math.min(legacyUnassignedLoad, freeBayIds.length);
+  const legacyShadowReservedBayIds = freeBayIds.slice(0, shadowReservedCount);
+  const assignableBayIds = freeBayIds.slice(shadowReservedCount);
+
+  return {
+    selectedBayId: assignableBayIds[0] ?? null,
+    freeBayIds,
+    legacyShadowReservedBayIds,
+    assignableBayIds,
+  };
+};
+
+export const getTASAppointments = async (filters?: AnyRow) => {
+  const [rows, bays] = await Promise.all([
+    listTASServiceBookings({
+      branchId: filters?.branchId,
+      status: filters?.status,
+      startDate: filters?.dateFrom ? new Date(filters.dateFrom).toISOString().slice(0, 10) : undefined,
+      endDate: filters?.dateTo ? new Date(filters.dateTo).toISOString().slice(0, 10) : undefined,
+      limit: 100,
+    }),
+    listTASServiceBays({ includeInactive: true }),
+  ]);
+
+  const bayMap = new Map<number, AnyRow>(
+    bays.map((bay: AnyRow) => [Number(bay.id), bay]),
+  );
+
+  return rows.map((row: AnyRow) => {
+    const mapped = mapAppointment(row);
+    const bayId = Number(row.bayId ?? 0);
+    const bay = bayId > 0 ? bayMap.get(bayId) : null;
+    return {
+      ...mapped,
+      bayId: bayId > 0 ? bayId : null,
+      bayName: bay?.name ?? null,
+      bayCode: bay?.code ?? null,
+      bayIsActive: bay ? Number(bay.isActive) === 1 : null,
+    };
+  });
+};
+
+export const createTASAppointment = async (input: AnyRow) => {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const branchId = Number(input.branchId ?? 0);
+  const serviceTypeId = Number(input.serviceTypeId ?? 0);
+  if (!Number.isInteger(branchId) || branchId <= 0) throw new Error("Valid branchId is required");
+  if (!Number.isInteger(serviceTypeId) || serviceTypeId <= 0) throw new Error("Valid serviceTypeId is required");
+
+  const parsedStart = input.startAt ? new Date(input.startAt) : null;
+  const start = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
+  if (!start) throw new Error("Valid appointment startAt is required");
+
+  const parsedEnd = input.endAt ? new Date(input.endAt) : null;
+  const explicitEnd = parsedEnd && !Number.isNaN(parsedEnd.getTime()) && parsedEnd > start ? parsedEnd : null;
+
+  return db.transaction(async (tx) => {
+    const branchRows = await tx.execute(sql`
+      SELECT id, name, isActive
+      FROM tas_branches
+      WHERE id = ${branchId}
+      LIMIT 1
+      FOR UPDATE
+    `);
+    const branch = ((branchRows as any)[0] ?? [])[0];
+    if (!branch) throw new Error("Branch not found");
+    if (Number(branch.isActive) !== 1) throw new Error("Branch is inactive");
+
+    const serviceRows = await tx.execute(sql`
+      SELECT id, name, durationMinutes, isActive
+      FROM tas_service_types
+      WHERE id = ${serviceTypeId}
+      LIMIT 1
+    `);
+    const serviceType = ((serviceRows as any)[0] ?? [])[0];
+    if (!serviceType) throw new Error("Service type not found");
+    if (Number(serviceType.isActive) !== 1) throw new Error("Service type is inactive");
+
+    const durationMinutes = Math.max(15, toNumber(serviceType.durationMinutes, 60));
+    const end = explicitEnd ?? new Date(start.getTime() + durationMinutes * 60_000);
+
+    const bayRows = await tx.execute(sql`
+      SELECT id, branchId, name, code, sortOrder
+      FROM tas_service_bays
+      WHERE branchId = ${branchId} AND isActive = 1
+      ORDER BY sortOrder ASC, id ASC
+      FOR UPDATE
+    `);
+    const activeBays = ((bayRows as any)[0] ?? []) as AnyRow[];
+    const activeBayIds = activeBays.map((bay) => Number(bay.id));
+
+    let selectedBay: AnyRow | null = null;
+    let assignmentMode: "auto_bay" | "legacy_no_bays" = "legacy_no_bays";
+    let legacyUnassignedLoad = 0;
+    let occupiedBayIds: number[] = [];
+
+    if (activeBays.length > 0) {
+      const overlapRows = await tx.execute(sql`
+        SELECT
+          b.id,
+          b.bayId,
+          b.startAt,
+          b.endAt,
+          b.preferredDate,
+          b.preferredTime,
+          COALESCE(st.durationMinutes, 60) AS bookingDurationMinutes
+        FROM tas_service_bookings b
+        LEFT JOIN tas_service_types st ON st.id = b.serviceTypeId
+        WHERE b.branchId = ${branchId}
+          AND b.status NOT IN ('Cancelled','NoShow')
+          AND COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)) < ${end}
+          AND COALESCE(
+            b.endAt,
+            DATE_ADD(
+              COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)),
+              INTERVAL COALESCE(st.durationMinutes, 60) MINUTE
+            )
+          ) > ${start}
+        FOR UPDATE
+      `);
+      const overlapping = ((overlapRows as any)[0] ?? []) as AnyRow[];
+      const activeSet = new Set(activeBayIds);
+
+      occupiedBayIds = Array.from(new Set(
+        overlapping
+          .map((row) => Number(row.bayId ?? 0))
+          .filter((bayId) => activeSet.has(bayId)),
+      )).sort((a, b) => a - b);
+
+      legacyUnassignedLoad = overlapping.filter((row) => !Number(row.bayId ?? 0)).length;
+
+      const selection = selectTASAutoBayCandidateForLoad({
+        activeBayIds,
+        occupiedBayIds,
+        legacyUnassignedLoad,
+      });
+
+      if (!selection.selectedBayId) {
+        throw new Error("No service Bay is available for the requested appointment time");
+      }
+
+      selectedBay = activeBays.find((bay) => Number(bay.id) === Number(selection.selectedBayId)) ?? null;
+      if (!selectedBay) throw new Error("Selected service Bay is no longer available");
+      assignmentMode = "auto_bay";
+    }
+
+    const preferredDate = start.toISOString().slice(0, 10);
+    const preferredTime = start.toISOString().slice(11, 16);
+    const bayId = selectedBay ? Number(selectedBay.id) : null;
+
+    const result = await tx.execute(sql`
+      INSERT INTO tas_service_bookings (
+        leadId, customerName, phone, vehicleBrand, vehicleModel, vehicleYear,
+        branchId, serviceTypeId, bayId,
+        preferredDate, preferredTime, startAt, endAt,
+        sourceChannel, notes, assignedTo, status, feedbackDueAt, feedbackStatus
+      )
+      VALUES (
+        ${input.leadId ?? null},
+        ${input.customerName ?? null},
+        ${input.customerPhone ?? input.phone ?? null},
+        ${input.vehicleBrand ?? null},
+        ${input.vehicleModel ?? null},
+        ${input.vehicleYear ?? null},
+        ${branchId},
+        ${serviceTypeId},
+        ${bayId},
+        ${preferredDate},
+        ${preferredTime},
+        ${start},
+        ${end},
+        ${input.sourceChannel ?? "CRM"},
+        ${input.serviceNotes ?? input.notes ?? null},
+        ${input.assignedUserId ?? input.assignedTo ?? null},
+        ${input.status ?? "PendingConfirmation"},
+        DATE_ADD(NOW(), INTERVAL 48 HOUR),
+        'Pending'
+      )
+    `);
+
+    const id = Number((result as any)[0]?.insertId ?? 0);
+    if (!id) throw new Error("Failed to create service appointment");
+
+    return {
+      id,
+      bayId,
+      bayName: selectedBay?.name ?? null,
+      bayCode: selectedBay?.code ?? null,
+      assignmentMode,
+      durationMinutes,
+      startAt: start.toISOString(),
+      endAt: end.toISOString(),
+      legacyUnassignedLoad,
+      occupiedBayIds,
+    };
+  });
+};
