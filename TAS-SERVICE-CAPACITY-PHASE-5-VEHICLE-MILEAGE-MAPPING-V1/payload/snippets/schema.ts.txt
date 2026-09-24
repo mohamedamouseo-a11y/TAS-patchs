@@ -1,0 +1,19 @@
+export const tasMaintenanceVehicleMappings = mysqlTable("tas_maintenance_vehicle_mappings", {
+  id: int("id").autoincrement().primaryKey(),
+  vehicleId: int("vehicleId").notNull(),
+  planId: int("planId").notNull(),
+  powertrain: varchar("powertrain", { length: 120 }),
+  variant: varchar("variant", { length: 120 }),
+  yearFrom: int("yearFrom"),
+  yearTo: int("yearTo"),
+  notes: text("notes"),
+  sortOrder: int("sortOrder").notNull().default(0),
+  isActive: tinyint("isActive").notNull().default(1),
+  createdAt: timestamp("createdAt", { mode: "string" }).notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_tas_maint_vehicle_vehicle").on(table.vehicleId, table.isActive, table.sortOrder, table.id),
+  index("idx_tas_maint_vehicle_plan").on(table.planId, table.isActive, table.id),
+]);
+export type TASMaintenanceVehicleMapping = typeof tasMaintenanceVehicleMappings.$inferSelect;
+export type InsertTASMaintenanceVehicleMapping = typeof tasMaintenanceVehicleMappings.$inferInsert;
