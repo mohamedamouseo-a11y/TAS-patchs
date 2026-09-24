@@ -94,7 +94,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-for cmd in realpath git curl python3 node sha256sum pm2 cp cmp grep mkdir rm patch pnpm; do
+for cmd in realpath git curl python3 node sha256sum pm2 cp cmp grep mkdir rm patch pnpm seq sleep; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "DEPLOY=FAIL"; echo "ERROR=MISSING_COMMAND_$cmd"; exit 2; }
 done
 
@@ -217,11 +217,11 @@ echo "PATCH=PASS"
 )
 echo "BUILD=PASS"
 
+MIGRATION_APPLIED=1
 (
   cd "$CURRENT"
   pnpm exec tsx scripts/apply-tas-maintenance-vehicle-mapping-v1.ts --apply
 )
-MIGRATION_APPLIED=1
 
 (
   cd "$CURRENT"
@@ -283,11 +283,11 @@ for rel in "${EXISTING_TARGETS[@]}"; do
   }
 done
 
+CANON_MUTATED=1
 for rel in "${ALL_TARGETS[@]}"; do
   mkdir -p "$(dirname "$REPO/$rel")"
   cp -a "$CURRENT/$rel" "$REPO/$rel"
 done
-CANON_MUTATED=1
 
 INDEX_AFTER="$(git -C "$REPO" ls-files -s | sha256sum | awk '{print $1}')"
 [ "$INDEX_BEFORE" = "$INDEX_AFTER" ] || { echo "SOURCE_SYNC=FAIL"; echo "ERROR=CANONICAL_INDEX_CHANGED"; exit 8; }
