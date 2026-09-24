@@ -1,0 +1,4 @@
+  listTASMaintenanceVehicleMappings,
+  createTASMaintenanceVehicleMapping,
+  updateTASMaintenanceVehicleMapping,
+  resolveTASMaintenanceMileage,
