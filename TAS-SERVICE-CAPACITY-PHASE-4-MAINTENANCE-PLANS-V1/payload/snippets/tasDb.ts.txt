@@ -1,0 +1,162 @@
+export const listTASMaintenancePlans = async (input?: { includeInactive?: boolean }) => {
+  const db = await getDb();
+  if (!db) return [];
+  const result = input?.includeInactive
+    ? await db.execute(sql`SELECT p.*,
+        (SELECT COUNT(*) FROM tas_maintenance_intervals i WHERE i.planId = p.id) AS intervalCount,
+        (SELECT COUNT(*) FROM tas_maintenance_intervals i WHERE i.planId = p.id AND i.isActive = 1) AS activeIntervalCount
+      FROM tas_maintenance_plans p
+      ORDER BY p.isActive DESC, p.sortOrder ASC, p.name ASC, p.id ASC`)
+    : await db.execute(sql`SELECT p.*,
+        (SELECT COUNT(*) FROM tas_maintenance_intervals i WHERE i.planId = p.id) AS intervalCount,
+        (SELECT COUNT(*) FROM tas_maintenance_intervals i WHERE i.planId = p.id AND i.isActive = 1) AS activeIntervalCount
+      FROM tas_maintenance_plans p
+      WHERE p.isActive = 1
+      ORDER BY p.sortOrder ASC, p.name ASC, p.id ASC`);
+  return (result as any)[0] ?? [];
+};
+
+const assertUniqueTASMaintenancePlanCode = async (db: any, code: string | null, excludeId?: number) => {
+  if (!code) return;
+  const rows = excludeId
+    ? await db.execute(sql`SELECT id FROM tas_maintenance_plans WHERE LOWER(code)=LOWER(${code}) AND id <> ${excludeId} LIMIT 1`)
+    : await db.execute(sql`SELECT id FROM tas_maintenance_plans WHERE LOWER(code)=LOWER(${code}) LIMIT 1`);
+  if (((rows as any)[0] ?? []).length) throw new Error("Maintenance plan code already exists");
+};
+
+export const createTASMaintenancePlan = async (input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return 0;
+  const name = String(input.name ?? "").trim();
+  if (!name) throw new Error("Maintenance plan name is required");
+  if (name.length > 180) throw new Error("Maintenance plan name is too long");
+  const codeRaw = String(input.code ?? "").trim();
+  const code = codeRaw ? codeRaw.slice(0, 80) : null;
+  await assertUniqueTASMaintenancePlanCode(db, code);
+  const description = input.description == null ? null : (String(input.description).trim() || null);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, 0))));
+  const isActive = input.isActive === false || input.isActive === 0 ? 0 : 1;
+
+  const result = await db.execute(sql`
+    INSERT INTO tas_maintenance_plans (name, code, description, sortOrder, isActive)
+    VALUES (${name}, ${code}, ${description}, ${sortOrder}, ${isActive})
+  `);
+  return Number((result as any)[0]?.insertId ?? 0);
+};
+
+export const updateTASMaintenancePlan = async (planId: number, input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return false;
+  if (!Number.isInteger(planId) || planId <= 0) throw new Error("Valid maintenance plan id is required");
+
+  const existingRows = await db.execute(sql`SELECT * FROM tas_maintenance_plans WHERE id = ${planId} LIMIT 1`);
+  const existing = ((existingRows as any)[0] ?? [])[0];
+  if (!existing) throw new Error("Maintenance plan not found");
+
+  const name = String(input.name ?? existing.name ?? "").trim();
+  if (!name) throw new Error("Maintenance plan name is required");
+  if (name.length > 180) throw new Error("Maintenance plan name is too long");
+  const codeRaw = input.code !== undefined ? String(input.code ?? "").trim() : String(existing.code ?? "").trim();
+  const code = codeRaw ? codeRaw.slice(0, 80) : null;
+  await assertUniqueTASMaintenancePlanCode(db, code, planId);
+
+  const description = input.description !== undefined
+    ? (String(input.description ?? "").trim() || null)
+    : (existing.description ?? null);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, existing.sortOrder ?? 0))));
+  const isActive = input.isActive === undefined
+    ? (Number(existing.isActive) === 1 ? 1 : 0)
+    : (input.isActive === false || input.isActive === 0 ? 0 : 1);
+
+  await db.execute(sql`
+    UPDATE tas_maintenance_plans
+    SET name=${name}, code=${code}, description=${description}, sortOrder=${sortOrder}, isActive=${isActive}, updatedAt=CURRENT_TIMESTAMP
+    WHERE id=${planId}
+  `);
+  return true;
+};
+
+export const listTASMaintenanceIntervals = async (input?: { planId?: number; includeInactive?: boolean }) => {
+  const db = await getDb();
+  if (!db) return [];
+  const planId = Number(input?.planId ?? 0);
+  if (!Number.isInteger(planId) || planId <= 0) return [];
+  const result = input?.includeInactive
+    ? await db.execute(sql`SELECT * FROM tas_maintenance_intervals WHERE planId=${planId} ORDER BY isActive DESC, sortOrder ASC, mileageKm ASC, id ASC`)
+    : await db.execute(sql`SELECT * FROM tas_maintenance_intervals WHERE planId=${planId} AND isActive=1 ORDER BY sortOrder ASC, mileageKm ASC, id ASC`);
+  return (result as any)[0] ?? [];
+};
+
+const assertTASMaintenancePlanExists = async (db: any, planId: number) => {
+  const rows = await db.execute(sql`SELECT id FROM tas_maintenance_plans WHERE id=${planId} LIMIT 1`);
+  if (!(((rows as any)[0] ?? [])[0])) throw new Error("Maintenance plan not found");
+};
+
+const assertUniqueTASMaintenanceMileage = async (db: any, planId: number, mileageKm: number, excludeId?: number) => {
+  const rows = excludeId
+    ? await db.execute(sql`SELECT id FROM tas_maintenance_intervals WHERE planId=${planId} AND mileageKm=${mileageKm} AND id <> ${excludeId} LIMIT 1`)
+    : await db.execute(sql`SELECT id FROM tas_maintenance_intervals WHERE planId=${planId} AND mileageKm=${mileageKm} LIMIT 1`);
+  if (((rows as any)[0] ?? []).length) throw new Error("Mileage already exists in this maintenance plan");
+};
+
+export const createTASMaintenanceInterval = async (input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return 0;
+  const planId = Number(input.planId ?? 0);
+  if (!Number.isInteger(planId) || planId <= 0) throw new Error("Valid maintenance plan id is required");
+  await assertTASMaintenancePlanExists(db, planId);
+
+  const mileageKm = Math.trunc(toNumber(input.mileageKm, -1));
+  if (mileageKm < 0 || mileageKm > 2000000) throw new Error("Mileage must be between 0 and 2000000 km");
+  await assertUniqueTASMaintenanceMileage(db, planId, mileageKm);
+
+  const durationMinutes = Math.trunc(toNumber(input.durationMinutes, 60));
+  if (durationMinutes < 15 || durationMinutes > 2880) throw new Error("Duration must be between 15 and 2880 minutes");
+  const labelRaw = String(input.label ?? "").trim();
+  const label = labelRaw ? labelRaw.slice(0, 120) : null;
+  const notes = input.notes == null ? null : (String(input.notes).trim() || null);
+  const sortOrder = Math.max(-100000, Math.min(2000000, Math.trunc(toNumber(input.sortOrder, mileageKm))));
+  const isActive = input.isActive === false || input.isActive === 0 ? 0 : 1;
+
+  const result = await db.execute(sql`
+    INSERT INTO tas_maintenance_intervals (planId, mileageKm, label, durationMinutes, notes, sortOrder, isActive)
+    VALUES (${planId}, ${mileageKm}, ${label}, ${durationMinutes}, ${notes}, ${sortOrder}, ${isActive})
+  `);
+  return Number((result as any)[0]?.insertId ?? 0);
+};
+
+export const updateTASMaintenanceInterval = async (intervalId: number, input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return false;
+  if (!Number.isInteger(intervalId) || intervalId <= 0) throw new Error("Valid maintenance interval id is required");
+
+  const existingRows = await db.execute(sql`SELECT * FROM tas_maintenance_intervals WHERE id=${intervalId} LIMIT 1`);
+  const existing = ((existingRows as any)[0] ?? [])[0];
+  if (!existing) throw new Error("Maintenance interval not found");
+
+  const planId = Number(input.planId ?? existing.planId);
+  if (!Number.isInteger(planId) || planId <= 0) throw new Error("Valid maintenance plan id is required");
+  await assertTASMaintenancePlanExists(db, planId);
+
+  const mileageKm = Math.trunc(toNumber(input.mileageKm, existing.mileageKm));
+  if (mileageKm < 0 || mileageKm > 2000000) throw new Error("Mileage must be between 0 and 2000000 km");
+  await assertUniqueTASMaintenanceMileage(db, planId, mileageKm, intervalId);
+
+  const durationMinutes = Math.trunc(toNumber(input.durationMinutes, existing.durationMinutes ?? 60));
+  if (durationMinutes < 15 || durationMinutes > 2880) throw new Error("Duration must be between 15 and 2880 minutes");
+  const labelRaw = input.label !== undefined ? String(input.label ?? "").trim() : String(existing.label ?? "").trim();
+  const label = labelRaw ? labelRaw.slice(0, 120) : null;
+  const notes = input.notes !== undefined ? (String(input.notes ?? "").trim() || null) : (existing.notes ?? null);
+  const sortOrder = Math.max(-100000, Math.min(2000000, Math.trunc(toNumber(input.sortOrder, existing.sortOrder ?? mileageKm))));
+  const isActive = input.isActive === undefined
+    ? (Number(existing.isActive) === 1 ? 1 : 0)
+    : (input.isActive === false || input.isActive === 0 ? 0 : 1);
+
+  await db.execute(sql`
+    UPDATE tas_maintenance_intervals
+    SET planId=${planId}, mileageKm=${mileageKm}, label=${label}, durationMinutes=${durationMinutes},
+        notes=${notes}, sortOrder=${sortOrder}, isActive=${isActive}, updatedAt=CURRENT_TIMESTAMP
+    WHERE id=${intervalId}
+  `);
+  return true;
+};
