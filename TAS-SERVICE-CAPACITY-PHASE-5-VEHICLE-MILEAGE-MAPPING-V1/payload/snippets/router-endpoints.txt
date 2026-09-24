@@ -1,0 +1,14 @@
+    listMaintenanceVehicleMappings: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => listTASMaintenanceVehicleMappings({
+      vehicleId: Number(input?.vehicleId ?? 0) || undefined,
+      planId: Number(input?.planId ?? 0) || undefined,
+      includeInactive: Boolean(input?.includeInactive),
+    })),
+    createMaintenanceVehicleMapping: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASMaintenanceVehicleMapping(input ?? {}) })),
+    updateMaintenanceVehicleMapping: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASMaintenanceVehicleMapping(Number(input?.id ?? input?.mappingId), input ?? {})),
+    resolveMaintenanceMileage: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => resolveTASMaintenanceMileage({
+      vehicleId: Number(input?.vehicleId ?? 0),
+      mileageKm: Number(input?.mileageKm ?? -1),
+      powertrain: input?.powertrain,
+      variant: input?.variant,
+      year: input?.year == null || input?.year === '' ? undefined : Number(input.year),
+    })),
