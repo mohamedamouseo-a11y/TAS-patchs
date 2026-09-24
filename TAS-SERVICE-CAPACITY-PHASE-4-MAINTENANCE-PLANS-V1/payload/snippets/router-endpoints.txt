@@ -1,0 +1,11 @@
+    listMaintenancePlans: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => listTASMaintenancePlans({
+      includeInactive: Boolean(input?.includeInactive),
+    })),
+    createMaintenancePlan: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASMaintenancePlan(input ?? {}) })),
+    updateMaintenancePlan: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASMaintenancePlan(Number(input?.id ?? input?.planId), input ?? {})),
+    listMaintenanceIntervals: tasPermissionProcedure.input(tasAnyInput).query(async ({ input }) => listTASMaintenanceIntervals({
+      planId: Number(input?.planId ?? 0) || undefined,
+      includeInactive: Boolean(input?.includeInactive),
+    })),
+    createMaintenanceInterval: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASMaintenanceInterval(input ?? {}) })),
+    updateMaintenanceInterval: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASMaintenanceInterval(Number(input?.id ?? input?.intervalId), input ?? {})),
