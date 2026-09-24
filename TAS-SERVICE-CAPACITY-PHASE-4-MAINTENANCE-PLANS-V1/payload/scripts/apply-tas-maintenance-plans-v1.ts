@@ -59,7 +59,7 @@ async function main() {
         "sortOrder INT NOT NULL DEFAULT 0," +
         "isActive TINYINT NOT NULL DEFAULT 1," +
         "createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-        "updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
+        "updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP," +
         "PRIMARY KEY (id)," +
         "INDEX idx_tas_maintenance_plans_active (isActive,sortOrder,id)," +
         "INDEX idx_tas_maintenance_plans_code (code)" +
@@ -84,7 +84,7 @@ async function main() {
         "sortOrder INT NOT NULL DEFAULT 0," +
         "isActive TINYINT NOT NULL DEFAULT 1," +
         "createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP," +
-        "updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP," +
+        "updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP," +
         "PRIMARY KEY (id)," +
         "INDEX idx_tas_maintenance_intervals_plan (planId,mileageKm,id)," +
         "INDEX idx_tas_maintenance_intervals_active (planId,isActive,sortOrder,id)" +
