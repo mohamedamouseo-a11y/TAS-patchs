@@ -112,14 +112,12 @@ done
 
 mkdir -p "$TMP/payload/client/src/components/tas" "$TMP/payload/scripts" "$TMP/payload/snippets"
 curl -fsSL "$BASE_URL/source-transform.py" -o "$TMP/source-transform.py"
-curl -fsSL "$BASE_URL/payload/client/src/components/tas/TASMaintenanceVehicleMappingSettings.tsx" -o "$TMP/payload/client/src/components/tas/TASMaintenanceVehicleMappingSettings.tsx"
-curl -fsSL "$BASE_URL/payload/scripts/apply-tas-maintenance-vehicle-mapping-v1.ts" -o "$TMP/payload/scripts/apply-tas-maintenance-vehicle-mapping-v1.ts"
-curl -fsSL "$BASE_URL/payload/scripts/verify-tas-maintenance-vehicle-mapping-v1.ts" -o "$TMP/payload/scripts/verify-tas-maintenance-vehicle-mapping-v1.ts"
+curl -fsSL "$BASE_URL/payload/client/src/components/tas/TASAvailabilityEngineV2Panel.tsx" -o "$TMP/payload/client/src/components/tas/TASAvailabilityEngineV2Panel.tsx"
+curl -fsSL "$BASE_URL/payload/scripts/apply-tas-availability-engine-v2.ts" -o "$TMP/payload/scripts/apply-tas-availability-engine-v2.ts"
+curl -fsSL "$BASE_URL/payload/scripts/verify-tas-availability-engine-v2.ts" -o "$TMP/payload/scripts/verify-tas-availability-engine-v2.ts"
 curl -fsSL "$BASE_URL/payload/scripts/rollback-tas-availability-engine-v2.ts" -o "$TMP/payload/scripts/rollback-tas-availability-engine-v2.ts"
-curl -fsSL "$BASE_URL/payload/snippets/schema.ts.txt" -o "$TMP/payload/snippets/schema.ts.txt"
-curl -fsSL "$BASE_URL/payload/snippets/tasDb.ts.txt" -o "$TMP/payload/snippets/tasDb.ts.txt"
-curl -fsSL "$BASE_URL/payload/snippets/router-import.txt" -o "$TMP/payload/snippets/router-import.txt"
-curl -fsSL "$BASE_URL/payload/snippets/router-endpoints.txt" -o "$TMP/payload/snippets/router-endpoints.txt"
+curl -fsSL "$BASE_URL/payload/scripts/verify-tas-availability-engine-v2-runtime.ts" -o "$TMP/payload/scripts/verify-tas-availability-engine-v2-runtime.ts"
+curl -fsSL "$BASE_URL/payload/snippets/tasDb-availability-v2.ts.txt" -o "$TMP/payload/snippets/tasDb-availability-v2.ts.txt"
 
 python3 -m py_compile "$TMP/source-transform.py"
 
