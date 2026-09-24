@@ -1,0 +1,33 @@
+export const tasMaintenancePlans = mysqlTable("tas_maintenance_plans", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 180 }).notNull(),
+  code: varchar("code", { length: 80 }),
+  description: text("description"),
+  sortOrder: int("sortOrder").notNull().default(0),
+  isActive: tinyint("isActive").notNull().default(1),
+  createdAt: timestamp("createdAt", { mode: "string" }).notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow().onUpdateNow(),
+}, (table) => [
+  index("idx_tas_maintenance_plans_active").on(table.isActive, table.sortOrder, table.id),
+  index("idx_tas_maintenance_plans_code").on(table.code),
+]);
+export type TASMaintenancePlan = typeof tasMaintenancePlans.$inferSelect;
+export type InsertTASMaintenancePlan = typeof tasMaintenancePlans.$inferInsert;
+
+export const tasMaintenanceIntervals = mysqlTable("tas_maintenance_intervals", {
+  id: int("id").autoincrement().primaryKey(),
+  planId: int("planId").notNull(),
+  mileageKm: int("mileageKm").notNull(),
+  label: varchar("label", { length: 120 }),
+  durationMinutes: int("durationMinutes").notNull().default(60),
+  notes: text("notes"),
+  sortOrder: int("sortOrder").notNull().default(0),
+  isActive: tinyint("isActive").notNull().default(1),
+  createdAt: timestamp("createdAt", { mode: "string" }).notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow().onUpdateNow(),
+}, (table) => [
+  index("idx_tas_maintenance_intervals_plan").on(table.planId, table.mileageKm, table.id),
+  index("idx_tas_maintenance_intervals_active").on(table.planId, table.isActive, table.sortOrder, table.id),
+]);
+export type TASMaintenanceInterval = typeof tasMaintenanceIntervals.$inferSelect;
+export type InsertTASMaintenanceInterval = typeof tasMaintenanceIntervals.$inferInsert;
