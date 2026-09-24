@@ -1,0 +1,6 @@
+  listTASMaintenancePlans,
+  createTASMaintenancePlan,
+  updateTASMaintenancePlan,
+  listTASMaintenanceIntervals,
+  createTASMaintenanceInterval,
+  updateTASMaintenanceInterval,
