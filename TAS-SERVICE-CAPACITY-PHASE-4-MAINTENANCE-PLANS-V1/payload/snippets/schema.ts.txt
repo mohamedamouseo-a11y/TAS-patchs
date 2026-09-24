@@ -6,7 +6,7 @@ export const tasMaintenancePlans = mysqlTable("tas_maintenance_plans", {
   sortOrder: int("sortOrder").notNull().default(0),
   isActive: tinyint("isActive").notNull().default(1),
   createdAt: timestamp("createdAt", { mode: "string" }).notNull().defaultNow(),
-  updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow(),
 }, (table) => [
   index("idx_tas_maintenance_plans_active").on(table.isActive, table.sortOrder, table.id),
   index("idx_tas_maintenance_plans_code").on(table.code),
@@ -24,7 +24,7 @@ export const tasMaintenanceIntervals = mysqlTable("tas_maintenance_intervals", {
   sortOrder: int("sortOrder").notNull().default(0),
   isActive: tinyint("isActive").notNull().default(1),
   createdAt: timestamp("createdAt", { mode: "string" }).notNull().defaultNow(),
-  updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow().onUpdateNow(),
+  updatedAt: timestamp("updatedAt", { mode: "string" }).notNull().defaultNow(),
 }, (table) => [
   index("idx_tas_maintenance_intervals_plan").on(table.planId, table.mileageKm, table.id),
   index("idx_tas_maintenance_intervals_active").on(table.planId, table.isActive, table.sortOrder, table.id),
