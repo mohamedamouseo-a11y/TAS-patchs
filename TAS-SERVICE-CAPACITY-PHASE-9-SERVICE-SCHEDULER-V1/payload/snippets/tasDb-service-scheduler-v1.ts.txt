@@ -1,0 +1,226 @@
+export const getTASServiceScheduler = async (input: { day: Date | string; branchId: number }) => {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const branchId = Number(input.branchId ?? 0);
+  if (!Number.isInteger(branchId) || branchId <= 0) throw new Error("Valid branchId is required");
+
+  const parsedDay = input.day instanceof Date ? input.day : new Date(String(input.day));
+  if (Number.isNaN(parsedDay.getTime())) throw new Error("Valid scheduler day is required");
+  const date = parsedDay.toISOString().slice(0, 10);
+
+  const branchRows = await db.execute(sql`
+    SELECT *
+    FROM tas_branches
+    WHERE id = ${branchId}
+    LIMIT 1
+  `);
+  const branch = ((branchRows as any)[0] ?? [])[0] as AnyRow | undefined;
+  if (!branch) throw new Error("Branch not found");
+
+  const [activeBays, allBays] = await Promise.all([
+    listTASServiceBays({ branchId, includeInactive: false }),
+    listTASServiceBays({ branchId, includeInactive: true }),
+  ]);
+
+  const dayStart = `${date} 00:00:00`;
+  const dayEnd = `${date} 23:59:59`;
+
+  const bookingRows = await db.execute(sql`
+    SELECT
+      b.*,
+      st.name AS serviceTypeName,
+      COALESCE(b.plannedDurationMinutes, st.durationMinutes, 60) AS schedulerDurationMinutes,
+      bay.name AS bayName,
+      bay.code AS bayCode,
+      bay.isActive AS bayIsActive,
+      mp.name AS maintenancePlanName,
+      mp.code AS maintenancePlanCode,
+      mi.label AS maintenanceIntervalLabel,
+      mi.mileageKm AS maintenanceMileageKm,
+      DATE_FORMAT(
+        COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)),
+        '%Y-%m-%dT%H:%i:%s'
+      ) AS schedulerStartAt,
+      DATE_FORMAT(
+        COALESCE(
+          b.endAt,
+          DATE_ADD(
+            COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)),
+            INTERVAL COALESCE(b.plannedDurationMinutes, st.durationMinutes, 60) MINUTE
+          )
+        ),
+        '%Y-%m-%dT%H:%i:%s'
+      ) AS schedulerEndAt
+    FROM tas_service_bookings b
+    LEFT JOIN tas_service_types st ON st.id = b.serviceTypeId
+    LEFT JOIN tas_service_bays bay ON bay.id = b.bayId
+    LEFT JOIN tas_maintenance_plans mp ON mp.id = b.maintenancePlanId
+    LEFT JOIN tas_maintenance_intervals mi ON mi.id = b.maintenanceIntervalId
+    WHERE b.branchId = ${branchId}
+      AND b.status NOT IN ('Cancelled', 'NoShow')
+      AND COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)) < ${dayEnd}
+      AND COALESCE(
+        b.endAt,
+        DATE_ADD(
+          COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)),
+          INTERVAL COALESCE(b.plannedDurationMinutes, st.durationMinutes, 60) MINUTE
+        )
+      ) > ${dayStart}
+    ORDER BY
+      COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)) ASC,
+      b.id ASC
+  `);
+
+  const rawBookings = ((bookingRows as any)[0] ?? []) as AnyRow[];
+  const activeBayIds = new Set(
+    activeBays
+      .map((bay: AnyRow) => Number(bay.id))
+      .filter((id: number) => Number.isInteger(id) && id > 0),
+  );
+
+  const nominalOffsetMinutes = (value: unknown) => {
+    const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    const base = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match || !base) return null;
+    const currentMs = Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+    );
+    const baseMs = Date.UTC(Number(base[1]), Number(base[2]) - 1, Number(base[3]));
+    return Math.round((currentMs - baseMs) / 60000);
+  };
+
+  const workdayStartMinutes = Math.max(
+    0,
+    Math.min(1439, toNumber(branch.workdayStartMinutes, toNumber(branch.workdayStartHour, 9) * 60)),
+  );
+  const workdayEndMinutes = Math.max(
+    workdayStartMinutes + 1,
+    Math.min(1440, toNumber(branch.workdayEndMinutes, toNumber(branch.workdayEndHour, 18) * 60)),
+  );
+  const bookingStartMinutes = Math.max(
+    workdayStartMinutes,
+    Math.min(workdayEndMinutes, toNumber(branch.bookingStartMinutes, workdayStartMinutes)),
+  );
+  const bookingEndMinutes = Math.max(
+    bookingStartMinutes,
+    Math.min(workdayEndMinutes, toNumber(branch.bookingEndMinutes, workdayEndMinutes)),
+  );
+  const slotIntervalMinutes = Math.max(15, toNumber(branch.slotIntervalMinutes, 30));
+
+  let assignedCount = 0;
+  let unassignedCount = 0;
+  let exceptionCount = 0;
+  let assignedMinutes = 0;
+
+  const bookings = rawBookings.map((row: AnyRow) => {
+    const bayId = Number(row.bayId ?? 0);
+    const laneType = bayId <= 0
+      ? "unassigned"
+      : activeBayIds.has(bayId)
+        ? "bay"
+        : "exception";
+
+    if (laneType === "bay") assignedCount += 1;
+    else if (laneType === "unassigned") unassignedCount += 1;
+    else exceptionCount += 1;
+
+    const startOffsetMinutes = nominalOffsetMinutes(row.schedulerStartAt);
+    const endOffsetMinutes = nominalOffsetMinutes(row.schedulerEndAt);
+    if (laneType === "bay" && startOffsetMinutes !== null && endOffsetMinutes !== null) {
+      assignedMinutes += Math.max(
+        0,
+        Math.min(endOffsetMinutes, workdayEndMinutes) - Math.max(startOffsetMinutes, workdayStartMinutes),
+      );
+    }
+
+    return {
+      id: Number(row.id),
+      customerName: row.customerName ?? null,
+      customerPhone: row.phone ?? null,
+      vehicleId: row.vehicleId == null ? null : Number(row.vehicleId),
+      vehicleBrand: row.vehicleBrand ?? null,
+      vehicleModel: row.vehicleModel ?? null,
+      vehicleYear: row.vehicleYear ?? null,
+      mileageKm: row.mileageKm == null ? null : Number(row.mileageKm),
+      serviceTypeId: row.serviceTypeId == null ? null : Number(row.serviceTypeId),
+      serviceTypeName: row.serviceTypeName ?? null,
+      bayId: bayId > 0 ? bayId : null,
+      bayName: row.bayName ?? null,
+      bayCode: row.bayCode ?? null,
+      bayIsActive: row.bayIsActive == null ? null : Number(row.bayIsActive) === 1,
+      status: row.status,
+      sourceChannel: row.sourceChannel ?? null,
+      startAt: row.schedulerStartAt,
+      endAt: row.schedulerEndAt,
+      durationMinutes: Math.max(15, toNumber(row.schedulerDurationMinutes, 60)),
+      maintenancePlanId: row.maintenancePlanId == null ? null : Number(row.maintenancePlanId),
+      maintenancePlanName: row.maintenancePlanName ?? null,
+      maintenancePlanCode: row.maintenancePlanCode ?? null,
+      maintenanceIntervalId: row.maintenanceIntervalId == null ? null : Number(row.maintenanceIntervalId),
+      maintenanceIntervalLabel: row.maintenanceIntervalLabel ?? null,
+      maintenanceMileageKm: row.maintenanceMileageKm == null ? null : Number(row.maintenanceMileageKm),
+      notes: row.notes ?? null,
+      laneType,
+    };
+  });
+
+  const totalCapacityMinutes = activeBays.length * Math.max(0, workdayEndMinutes - workdayStartMinutes);
+  const utilizationPct = totalCapacityMinutes > 0
+    ? Math.round((assignedMinutes / totalCapacityMinutes) * 1000) / 10
+    : 0;
+
+  const bayIndex = new Map<number, AnyRow>(allBays.map((bay: AnyRow) => [Number(bay.id), bay]));
+  const exceptionBayIds = Array.from(new Set(
+    bookings
+      .filter((booking: AnyRow) => booking.laneType === "exception" && Number(booking.bayId ?? 0) > 0)
+      .map((booking: AnyRow) => Number(booking.bayId)),
+  ));
+
+  return {
+    schedulerVersion: 1,
+    date,
+    branch: {
+      id: Number(branch.id),
+      name: branch.name,
+      city: branch.city ?? null,
+      isActive: Number(branch.isActive) === 1,
+      workdayStartMinutes,
+      workdayEndMinutes,
+      bookingStartMinutes,
+      bookingEndMinutes,
+      slotIntervalMinutes,
+    },
+    bays: activeBays.map((bay: AnyRow) => ({
+      id: Number(bay.id),
+      name: bay.name,
+      code: bay.code ?? null,
+      bayType: bay.bayType ?? "General",
+      sortOrder: toNumber(bay.sortOrder, 0),
+    })),
+    exceptionBays: exceptionBayIds.map((id) => {
+      const bay = bayIndex.get(id);
+      return {
+        id,
+        name: bay?.name ?? `Bay #${id}`,
+        code: bay?.code ?? null,
+        isActive: bay ? Number(bay.isActive) === 1 : false,
+      };
+    }),
+    bookings,
+    summary: {
+      activeBayCount: activeBays.length,
+      bookingCount: bookings.length,
+      assignedCount,
+      unassignedCount,
+      exceptionCount,
+      assignedMinutes,
+      totalCapacityMinutes,
+      utilizationPct,
+    },
+  };
+};
