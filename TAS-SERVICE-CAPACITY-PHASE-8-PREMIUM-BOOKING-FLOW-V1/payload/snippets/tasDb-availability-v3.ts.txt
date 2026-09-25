@@ -1,0 +1,182 @@
+export const getAvailableTASSlots = async (input: {
+  day: Date;
+  branchId?: number;
+  serviceTypeId?: number;
+  maintenanceIntervalId?: number | null;
+}) => {
+  const db = await getDb();
+  const day = input.day instanceof Date ? input.day : new Date(input.day);
+  if (Number.isNaN(day.getTime())) return [];
+
+  const date = day.toISOString().slice(0, 10);
+  const businessDay = new Date(`${date}T12:00:00`);
+  const branches = await getTASBranches();
+  const branch = branches.find((item: AnyRow) => Number(item.id) === Number(input.branchId)) ?? branches[0];
+  if (!branch) return [];
+
+  const workingDays = normalizeWorkingDays(branch.workingDaysJson);
+  if (!workingDays.includes(businessDay.getDay())) return [];
+
+  const serviceTypes = await getTASServiceTypes();
+  const serviceType = serviceTypes.find((item: AnyRow) => Number(item.id) === Number(input.serviceTypeId));
+
+  let maintenanceInterval: AnyRow | null = null;
+  const maintenanceIntervalId = Number(input.maintenanceIntervalId ?? 0);
+  if (maintenanceIntervalId > 0) {
+    const intervals = await listTASMaintenanceIntervals({ includeInactive: false });
+    maintenanceInterval = intervals.find((row: AnyRow) => Number(row.id) === maintenanceIntervalId) ?? null;
+    if (!maintenanceInterval) throw new Error("Maintenance interval not found or inactive");
+  }
+
+  const durationMinutes = Math.max(
+    15,
+    toNumber(maintenanceInterval?.durationMinutes, toNumber(serviceType?.durationMinutes, 60)),
+  );
+  const durationSource = maintenanceInterval ? "maintenance_interval" : "service_type";
+  const intervalMinutes = Math.max(15, toNumber(branch.slotIntervalMinutes, 30));
+  const legacyCapacity = Math.max(
+    1,
+    Math.min(
+      toNumber(branch.capacityPerSlot, 1),
+      toNumber(serviceType?.slotCapacity ?? serviceType?.defaultCapacityUnits, toNumber(branch.capacityPerSlot, 1)),
+    ),
+  );
+
+  const workdayStartMinutes = toNumber(branch.workdayStartMinutes, toNumber(branch.workdayStartHour, 9) * 60);
+  const workdayEndMinutes = toNumber(branch.workdayEndMinutes, toNumber(branch.workdayEndHour, 18) * 60);
+  const bookingStartMinutes = Math.max(workdayStartMinutes, toNumber(branch.bookingStartMinutes, workdayStartMinutes));
+  const bookingEndMinutes = Math.min(workdayEndMinutes, toNumber(branch.bookingEndMinutes, workdayEndMinutes));
+  const endOfDayBufferMinutes = Math.max(0, toNumber(branch.endOfDayBufferMinutes, 60));
+  const serviceEndLimit = workdayEndMinutes - endOfDayBufferMinutes;
+  const latestStart = Math.min(bookingEndMinutes, serviceEndLimit - durationMinutes);
+
+  const activeBays = await listTASServiceBays({ branchId: Number(branch.id), includeInactive: false });
+  const activeBayIds = new Set(activeBays.map((bay: AnyRow) => Number(bay.id)).filter((id: number) => Number.isInteger(id) && id > 0));
+
+  let bookings: AnyRow[] = [];
+  if (db) {
+    const dayStart = new Date(`${date}T00:00:00`);
+    const dayEnd = new Date(`${date}T23:59:59.999`);
+    const rows = await db.execute(sql`
+      SELECT
+        b.id,
+        b.bayId,
+        b.startAt,
+        b.endAt,
+        b.preferredDate,
+        b.preferredTime,
+        COALESCE(b.plannedDurationMinutes, st.durationMinutes, 60) AS bookingDurationMinutes
+      FROM tas_service_bookings b
+      LEFT JOIN tas_service_types st ON st.id = b.serviceTypeId
+      WHERE b.branchId = ${branch.id}
+        AND b.status NOT IN ('Cancelled','NoShow')
+        AND COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)) < ${dayEnd}
+        AND COALESCE(
+          b.endAt,
+          DATE_ADD(
+            COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)),
+            INTERVAL COALESCE(b.plannedDurationMinutes, st.durationMinutes, 60) MINUTE
+          )
+        ) > ${dayStart}
+    `);
+    bookings = (rows as any)[0] ?? [];
+  }
+
+  const parseDate = (value: unknown) => {
+    if (!value) return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+    const parsed = new Date(String(value));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const bookingWindow = (row: AnyRow) => {
+    const preferredStart = row.preferredDate
+      ? `${row.preferredDate}T${row.preferredTime || "09:00"}:00`
+      : null;
+    const start = parseDate(row.startAt) ?? parseDate(preferredStart);
+    if (!start) return null;
+    const fallbackDuration = Math.max(15, toNumber(row.bookingDurationMinutes, 60));
+    const end = parseDate(row.endAt) ?? new Date(start.getTime() + fallbackDuration * 60_000);
+    return { start, end };
+  };
+
+  const bookingWindows = bookings
+    .map((row: AnyRow) => ({ row, window: bookingWindow(row) }))
+    .filter((item: AnyRow) => item.window);
+
+  const slots: AnyRow[] = [];
+
+  for (let minutes = bookingStartMinutes; minutes <= latestStart; minutes += intervalMinutes) {
+    const startHour = Math.floor(minutes / 60);
+    const startMinute = minutes % 60;
+    const endTotal = minutes + durationMinutes;
+    const endHour = Math.floor(endTotal / 60);
+    const endMinute = endTotal % 60;
+
+    const startAt = `${date}T${String(startHour).padStart(2, "0")}:${String(startMinute).padStart(2, "0")}:00`;
+    const endAt = `${date}T${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}:00`;
+    const slotStart = new Date(startAt);
+    const slotEnd = new Date(endAt);
+
+    const overlapping = bookingWindows
+      .filter((item: AnyRow) => item.window.start < slotEnd && item.window.end > slotStart)
+      .map((item: AnyRow) => item.row);
+
+    if (activeBayIds.size > 0) {
+      const occupiedBayIds = Array.from(new Set(
+        overlapping
+          .map((row: AnyRow) => Number(row.bayId ?? 0))
+          .filter((bayId: number) => activeBayIds.has(bayId)),
+      )).sort((a, b) => a - b);
+
+      const occupiedSet = new Set(occupiedBayIds);
+      const freeBayIds = Array.from(activeBayIds).filter((bayId) => !occupiedSet.has(bayId)).sort((a, b) => a - b);
+      const legacyUnassignedLoad = overlapping.filter((row: AnyRow) => !Number(row.bayId ?? 0)).length;
+      const assignedOutsideActiveBayCount = overlapping.filter((row: AnyRow) => {
+        const bayId = Number(row.bayId ?? 0);
+        return bayId > 0 && !activeBayIds.has(bayId);
+      }).length;
+
+      slots.push({
+        engineVersion: 2,
+        startAt,
+        endAt,
+        durationMinutes,
+        durationSource,
+        maintenanceIntervalId: maintenanceInterval ? Number(maintenanceInterval.id) : null,
+        maintenancePlanId: maintenanceInterval ? Number(maintenanceInterval.planId) : null,
+        capacitySource: "service_bays",
+        configuredBayCount: activeBayIds.size,
+        legacyCapacity,
+        reservedCount: overlapping.length,
+        assignedOccupiedBayIds: occupiedBayIds,
+        freeBayIds,
+        legacyUnassignedLoad,
+        assignedOutsideActiveBayCount,
+        availableCapacity: Math.max(0, freeBayIds.length - legacyUnassignedLoad),
+      });
+      continue;
+    }
+
+    slots.push({
+      engineVersion: 2,
+      startAt,
+      endAt,
+      durationMinutes,
+      durationSource,
+      maintenanceIntervalId: maintenanceInterval ? Number(maintenanceInterval.id) : null,
+      maintenancePlanId: maintenanceInterval ? Number(maintenanceInterval.planId) : null,
+      capacitySource: "legacy_capacity",
+      configuredBayCount: 0,
+      legacyCapacity,
+      reservedCount: overlapping.length,
+      assignedOccupiedBayIds: [],
+      freeBayIds: [],
+      legacyUnassignedLoad: overlapping.filter((row: AnyRow) => !Number(row.bayId ?? 0)).length,
+      assignedOutsideActiveBayCount: overlapping.filter((row: AnyRow) => Number(row.bayId ?? 0) > 0).length,
+      availableCapacity: Math.max(0, legacyCapacity - overlapping.length),
+    });
+  }
+
+  return slots;
+};
