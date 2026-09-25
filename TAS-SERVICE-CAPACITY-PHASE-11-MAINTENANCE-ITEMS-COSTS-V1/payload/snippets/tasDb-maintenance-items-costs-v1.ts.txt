@@ -1,0 +1,479 @@
+const TAS_MAINTENANCE_ITEM_TYPES = new Set(["Part", "Fluid", "Consumable", "Labor", "Operation", "Other"]);
+const TAS_MAINTENANCE_ACTIONS = new Set(["Replace", "Inspect", "Clean", "Adjust", "Lubricate", "TopUp", "Other"]);
+
+const normalizeMaintenanceItemType = (value: unknown) => {
+  const candidate = String(value ?? "Part").trim();
+  return TAS_MAINTENANCE_ITEM_TYPES.has(candidate) ? candidate : "Other";
+};
+
+const normalizeMaintenanceAction = (value: unknown) => {
+  const candidate = String(value ?? "Replace").trim();
+  return TAS_MAINTENANCE_ACTIONS.has(candidate) ? candidate : "Other";
+};
+
+const normalizeMaintenanceMoney = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.max(0, fallback);
+  return Math.round(Math.max(0, parsed) * 100) / 100;
+};
+
+const normalizeMaintenanceQuantity = (value: unknown, fallback = 1) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.round(parsed * 1000) / 1000;
+};
+
+const normalizeMaintenanceVat = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.max(0, Math.min(100, fallback));
+  return Math.round(Math.max(0, Math.min(100, parsed)) * 100) / 100;
+};
+
+const normalizeMaintenanceText = (value: unknown, max: number) => {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, max) : null;
+};
+
+export const listTASMaintenanceItems = async (input?: { includeInactive?: boolean; itemType?: string | null }) => {
+  const db = await getDb();
+  if (!db) return [];
+  const itemType = normalizeMaintenanceText(input?.itemType, 40);
+
+  if (itemType) {
+    const result = input?.includeInactive
+      ? await db.execute(sql`
+          SELECT *
+          FROM tas_maintenance_items
+          WHERE itemType = ${itemType}
+          ORDER BY isActive DESC, sortOrder ASC, name ASC, id ASC
+        `)
+      : await db.execute(sql`
+          SELECT *
+          FROM tas_maintenance_items
+          WHERE itemType = ${itemType} AND isActive = 1
+          ORDER BY sortOrder ASC, name ASC, id ASC
+        `);
+    return (result as any)[0] ?? [];
+  }
+
+  const result = input?.includeInactive
+    ? await db.execute(sql`
+        SELECT *
+        FROM tas_maintenance_items
+        ORDER BY isActive DESC, sortOrder ASC, name ASC, id ASC
+      `)
+    : await db.execute(sql`
+        SELECT *
+        FROM tas_maintenance_items
+        WHERE isActive = 1
+        ORDER BY sortOrder ASC, name ASC, id ASC
+      `);
+  return (result as any)[0] ?? [];
+};
+
+const assertUniqueTASMaintenanceItemCode = async (db: any, code: string | null, excludeId?: number) => {
+  if (!code) return;
+  const rows = excludeId
+    ? await db.execute(sql`SELECT id FROM tas_maintenance_items WHERE LOWER(code)=LOWER(${code}) AND id <> ${excludeId} LIMIT 1`)
+    : await db.execute(sql`SELECT id FROM tas_maintenance_items WHERE LOWER(code)=LOWER(${code}) LIMIT 1`);
+  if (((rows as any)[0] ?? []).length) throw new Error("Maintenance item code already exists");
+};
+
+export const createTASMaintenanceItem = async (input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const name = String(input.name ?? "").trim();
+  if (!name) throw new Error("Maintenance item name is required");
+  if (name.length > 180) throw new Error("Maintenance item name is too long");
+
+  const code = normalizeMaintenanceText(input.code, 80);
+  await assertUniqueTASMaintenanceItemCode(db, code);
+
+  const itemType = normalizeMaintenanceItemType(input.itemType);
+  const unit = normalizeMaintenanceText(input.unit, 40) ?? "unit";
+  const partNumber = normalizeMaintenanceText(input.partNumber, 120);
+  const defaultUnitCostEgp = normalizeMaintenanceMoney(input.defaultUnitCostEgp, 0);
+  const defaultUnitPriceEgp = normalizeMaintenanceMoney(input.defaultUnitPriceEgp, 0);
+  const defaultVatRatePct = normalizeMaintenanceVat(input.defaultVatRatePct, 0);
+  const preparationRequired = input.preparationRequired === true || input.preparationRequired === 1 ? 1 : 0;
+  const notes = input.notes == null ? null : (String(input.notes).trim() || null);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, 0))));
+  const isActive = input.isActive === false || input.isActive === 0 ? 0 : 1;
+
+  const result = await db.execute(sql`
+    INSERT INTO tas_maintenance_items (
+      code, name, itemType, unit, partNumber,
+      defaultUnitCostEgp, defaultUnitPriceEgp, defaultVatRatePct,
+      preparationRequired, notes, sortOrder, isActive
+    ) VALUES (
+      ${code}, ${name}, ${itemType}, ${unit}, ${partNumber},
+      ${defaultUnitCostEgp}, ${defaultUnitPriceEgp}, ${defaultVatRatePct},
+      ${preparationRequired}, ${notes}, ${sortOrder}, ${isActive}
+    )
+  `);
+  return Number((result as any)[0]?.insertId ?? 0);
+};
+
+export const updateTASMaintenanceItem = async (itemId: number, input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return false;
+  if (!Number.isInteger(itemId) || itemId <= 0) throw new Error("Valid maintenance item id is required");
+
+  const existingRows = await db.execute(sql`SELECT * FROM tas_maintenance_items WHERE id=${itemId} LIMIT 1`);
+  const existing = ((existingRows as any)[0] ?? [])[0];
+  if (!existing) throw new Error("Maintenance item not found");
+
+  const name = String(input.name ?? existing.name ?? "").trim();
+  if (!name) throw new Error("Maintenance item name is required");
+
+  const code = input.code !== undefined
+    ? normalizeMaintenanceText(input.code, 80)
+    : normalizeMaintenanceText(existing.code, 80);
+  await assertUniqueTASMaintenanceItemCode(db, code, itemId);
+
+  const itemType = normalizeMaintenanceItemType(input.itemType ?? existing.itemType);
+  const unit = normalizeMaintenanceText(input.unit ?? existing.unit, 40) ?? "unit";
+  const partNumber = input.partNumber !== undefined
+    ? normalizeMaintenanceText(input.partNumber, 120)
+    : normalizeMaintenanceText(existing.partNumber, 120);
+  const defaultUnitCostEgp = normalizeMaintenanceMoney(input.defaultUnitCostEgp, Number(existing.defaultUnitCostEgp ?? 0));
+  const defaultUnitPriceEgp = normalizeMaintenanceMoney(input.defaultUnitPriceEgp, Number(existing.defaultUnitPriceEgp ?? 0));
+  const defaultVatRatePct = normalizeMaintenanceVat(input.defaultVatRatePct, Number(existing.defaultVatRatePct ?? 0));
+  const preparationRequired = input.preparationRequired === undefined
+    ? (Number(existing.preparationRequired) === 1 ? 1 : 0)
+    : (input.preparationRequired === true || input.preparationRequired === 1 ? 1 : 0);
+  const notes = input.notes !== undefined ? (String(input.notes ?? "").trim() || null) : (existing.notes ?? null);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, existing.sortOrder ?? 0))));
+  const isActive = input.isActive === undefined
+    ? (Number(existing.isActive) === 1 ? 1 : 0)
+    : (input.isActive === false || input.isActive === 0 ? 0 : 1);
+
+  await db.execute(sql`
+    UPDATE tas_maintenance_items
+    SET code=${code},
+        name=${name},
+        itemType=${itemType},
+        unit=${unit},
+        partNumber=${partNumber},
+        defaultUnitCostEgp=${defaultUnitCostEgp},
+        defaultUnitPriceEgp=${defaultUnitPriceEgp},
+        defaultVatRatePct=${defaultVatRatePct},
+        preparationRequired=${preparationRequired},
+        notes=${notes},
+        sortOrder=${sortOrder},
+        isActive=${isActive},
+        updatedAt=CURRENT_TIMESTAMP
+    WHERE id=${itemId}
+  `);
+  return true;
+};
+
+const getTASMaintenanceItemForLine = async (db: any, itemId: number) => {
+  const rows = await db.execute(sql`
+    SELECT *
+    FROM tas_maintenance_items
+    WHERE id=${itemId}
+    LIMIT 1
+  `);
+  const item = ((rows as any)[0] ?? [])[0];
+  if (!item) throw new Error("Maintenance item not found");
+  if (Number(item.isActive) !== 1) throw new Error("Maintenance item is inactive");
+  return item;
+};
+
+const assertTASMaintenanceIntervalExists = async (db: any, intervalId: number) => {
+  const rows = await db.execute(sql`
+    SELECT i.id, i.planId, i.mileageKm, i.label, i.durationMinutes, i.isActive, p.name planName, p.code planCode
+    FROM tas_maintenance_intervals i
+    JOIN tas_maintenance_plans p ON p.id=i.planId
+    WHERE i.id=${intervalId}
+    LIMIT 1
+  `);
+  const interval = ((rows as any)[0] ?? [])[0];
+  if (!interval) throw new Error("Maintenance interval not found");
+  return interval;
+};
+
+export const listTASMaintenanceIntervalItems = async (input: { intervalId: number; includeInactive?: boolean }) => {
+  const db = await getDb();
+  if (!db) return [];
+
+  const intervalId = Number(input.intervalId ?? 0);
+  if (!Number.isInteger(intervalId) || intervalId <= 0) throw new Error("Valid maintenance interval id is required");
+
+  const result = input.includeInactive
+    ? await db.execute(sql`
+        SELECT
+          li.*,
+          mi.code itemCode,
+          mi.name itemName,
+          mi.itemType,
+          mi.unit,
+          mi.partNumber,
+          mi.isActive itemIsActive
+        FROM tas_maintenance_interval_items li
+        JOIN tas_maintenance_items mi ON mi.id=li.itemId
+        WHERE li.intervalId=${intervalId}
+        ORDER BY li.isActive DESC, li.sortOrder ASC, li.id ASC
+      `)
+    : await db.execute(sql`
+        SELECT
+          li.*,
+          mi.code itemCode,
+          mi.name itemName,
+          mi.itemType,
+          mi.unit,
+          mi.partNumber,
+          mi.isActive itemIsActive
+        FROM tas_maintenance_interval_items li
+        JOIN tas_maintenance_items mi ON mi.id=li.itemId
+        WHERE li.intervalId=${intervalId} AND li.isActive=1
+        ORDER BY li.sortOrder ASC, li.id ASC
+      `);
+
+  return (result as any)[0] ?? [];
+};
+
+export const createTASMaintenanceIntervalItem = async (input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return 0;
+
+  const intervalId = Number(input.intervalId ?? 0);
+  const itemId = Number(input.itemId ?? 0);
+  if (!Number.isInteger(intervalId) || intervalId <= 0) throw new Error("Valid maintenance interval id is required");
+  if (!Number.isInteger(itemId) || itemId <= 0) throw new Error("Valid maintenance item id is required");
+
+  await assertTASMaintenanceIntervalExists(db, intervalId);
+  const item = await getTASMaintenanceItemForLine(db, itemId);
+
+  const action = normalizeMaintenanceAction(input.action);
+  const quantity = normalizeMaintenanceQuantity(input.quantity, 1);
+  const unitCostEgp = normalizeMaintenanceMoney(input.unitCostEgp, Number(item.defaultUnitCostEgp ?? 0));
+  const unitPriceEgp = normalizeMaintenanceMoney(input.unitPriceEgp, Number(item.defaultUnitPriceEgp ?? 0));
+  const vatRatePct = normalizeMaintenanceVat(input.vatRatePct, Number(item.defaultVatRatePct ?? 0));
+  const preparationRequired = input.preparationRequired === undefined
+    ? (Number(item.preparationRequired) === 1 ? 1 : 0)
+    : (input.preparationRequired === true || input.preparationRequired === 1 ? 1 : 0);
+  const notes = input.notes == null ? null : (String(input.notes).trim() || null);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, 0))));
+  const isActive = input.isActive === false || input.isActive === 0 ? 0 : 1;
+
+  const result = await db.execute(sql`
+    INSERT INTO tas_maintenance_interval_items (
+      intervalId, itemId, action, quantity,
+      unitCostEgp, unitPriceEgp, vatRatePct,
+      preparationRequired, notes, sortOrder, isActive
+    ) VALUES (
+      ${intervalId}, ${itemId}, ${action}, ${quantity},
+      ${unitCostEgp}, ${unitPriceEgp}, ${vatRatePct},
+      ${preparationRequired}, ${notes}, ${sortOrder}, ${isActive}
+    )
+  `);
+  return Number((result as any)[0]?.insertId ?? 0);
+};
+
+export const updateTASMaintenanceIntervalItem = async (lineId: number, input: AnyRow) => {
+  const db = await getDb();
+  if (!db) return false;
+  if (!Number.isInteger(lineId) || lineId <= 0) throw new Error("Valid interval item id is required");
+
+  const rows = await db.execute(sql`SELECT * FROM tas_maintenance_interval_items WHERE id=${lineId} LIMIT 1`);
+  const existing = ((rows as any)[0] ?? [])[0];
+  if (!existing) throw new Error("Maintenance interval item not found");
+
+  const intervalId = Number(input.intervalId ?? existing.intervalId);
+  const itemId = Number(input.itemId ?? existing.itemId);
+  await assertTASMaintenanceIntervalExists(db, intervalId);
+  await getTASMaintenanceItemForLine(db, itemId);
+
+  const action = normalizeMaintenanceAction(input.action ?? existing.action);
+  const quantity = normalizeMaintenanceQuantity(input.quantity, Number(existing.quantity ?? 1));
+  const unitCostEgp = normalizeMaintenanceMoney(input.unitCostEgp, Number(existing.unitCostEgp ?? 0));
+  const unitPriceEgp = normalizeMaintenanceMoney(input.unitPriceEgp, Number(existing.unitPriceEgp ?? 0));
+  const vatRatePct = normalizeMaintenanceVat(input.vatRatePct, Number(existing.vatRatePct ?? 0));
+  const preparationRequired = input.preparationRequired === undefined
+    ? (Number(existing.preparationRequired) === 1 ? 1 : 0)
+    : (input.preparationRequired === true || input.preparationRequired === 1 ? 1 : 0);
+  const notes = input.notes !== undefined ? (String(input.notes ?? "").trim() || null) : (existing.notes ?? null);
+  const sortOrder = Math.max(-100000, Math.min(100000, Math.trunc(toNumber(input.sortOrder, existing.sortOrder ?? 0))));
+  const isActive = input.isActive === undefined
+    ? (Number(existing.isActive) === 1 ? 1 : 0)
+    : (input.isActive === false || input.isActive === 0 ? 0 : 1);
+
+  await db.execute(sql`
+    UPDATE tas_maintenance_interval_items
+    SET intervalId=${intervalId},
+        itemId=${itemId},
+        action=${action},
+        quantity=${quantity},
+        unitCostEgp=${unitCostEgp},
+        unitPriceEgp=${unitPriceEgp},
+        vatRatePct=${vatRatePct},
+        preparationRequired=${preparationRequired},
+        notes=${notes},
+        sortOrder=${sortOrder},
+        isActive=${isActive},
+        updatedAt=CURRENT_TIMESTAMP
+    WHERE id=${lineId}
+  `);
+  return true;
+};
+
+const summarizeTASMaintenanceLines = (lines: AnyRow[]) => {
+  const normalized = lines.map((line: AnyRow) => {
+    const quantity = normalizeMaintenanceQuantity(line.quantity, 1);
+    const unitCostEgp = normalizeMaintenanceMoney(line.unitCostEgp, 0);
+    const unitPriceEgp = normalizeMaintenanceMoney(line.unitPriceEgp, 0);
+    const vatRatePct = normalizeMaintenanceVat(line.vatRatePct, 0);
+    const costTotalEgp = Math.round(quantity * unitCostEgp * 100) / 100;
+    const priceBeforeVatEgp = Math.round(quantity * unitPriceEgp * 100) / 100;
+    const vatEgp = Math.round(priceBeforeVatEgp * (vatRatePct / 100) * 100) / 100;
+    const totalEgp = Math.round((priceBeforeVatEgp + vatEgp) * 100) / 100;
+    return {
+      ...line,
+      quantity,
+      unitCostEgp,
+      unitPriceEgp,
+      vatRatePct,
+      costTotalEgp,
+      priceBeforeVatEgp,
+      vatEgp,
+      totalEgp,
+      preparationRequired: Number(line.preparationRequired) === 1,
+      isActive: Number(line.isActive) === 1,
+    };
+  });
+
+  const sum = (key: string) => Math.round(
+    normalized.reduce((total: number, line: AnyRow) => total + Number(line[key] ?? 0), 0) * 100,
+  ) / 100;
+
+  return {
+    lines: normalized,
+    summary: {
+      lineCount: normalized.length,
+      preparationLineCount: normalized.filter((line: AnyRow) => line.preparationRequired).length,
+      costSubtotalEgp: sum("costTotalEgp"),
+      priceSubtotalEgp: sum("priceBeforeVatEgp"),
+      vatEgp: sum("vatEgp"),
+      totalEgp: sum("totalEgp"),
+    },
+  };
+};
+
+export const getTASMaintenanceIntervalPackage = async (intervalIdValue: unknown) => {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const intervalId = Number(intervalIdValue ?? 0);
+  if (!Number.isInteger(intervalId) || intervalId <= 0) throw new Error("Valid maintenance interval id is required");
+
+  const interval = await assertTASMaintenanceIntervalExists(db, intervalId);
+  const lines = await listTASMaintenanceIntervalItems({ intervalId, includeInactive: false });
+  const packageData = summarizeTASMaintenanceLines(lines);
+
+  return {
+    interval: {
+      id: Number(interval.id),
+      planId: Number(interval.planId),
+      planName: interval.planName,
+      planCode: interval.planCode ?? null,
+      mileageKm: Number(interval.mileageKm),
+      label: interval.label ?? null,
+      durationMinutes: Number(interval.durationMinutes),
+      isActive: Number(interval.isActive) === 1,
+    },
+    ...packageData,
+  };
+};
+
+export const listTASBookingMaintenanceItems = async (bookingIdValue: unknown) => {
+  const db = await getDb();
+  if (!db) return [];
+
+  const bookingId = Number(bookingIdValue ?? 0);
+  if (!Number.isInteger(bookingId) || bookingId <= 0) throw new Error("Valid bookingId is required");
+
+  const result = await db.execute(sql`
+    SELECT *
+    FROM tas_service_booking_items
+    WHERE bookingId=${bookingId}
+    ORDER BY id ASC
+  `);
+  return summarizeTASMaintenanceLines((result as any)[0] ?? []);
+};
+
+const snapshotTASMaintenancePackageForBooking = async (tx: any, input: {
+  bookingId: number;
+  maintenanceIntervalId: number | null;
+}) => {
+  if (!input.maintenanceIntervalId) {
+    return {
+      lines: [],
+      summary: {
+        lineCount: 0,
+        preparationLineCount: 0,
+        costSubtotalEgp: 0,
+        priceSubtotalEgp: 0,
+        vatEgp: 0,
+        totalEgp: 0,
+      },
+    };
+  }
+
+  const packageRows = await tx.execute(sql`
+    SELECT
+      li.id intervalItemId,
+      li.itemId,
+      mi.code itemCode,
+      mi.name itemName,
+      mi.itemType,
+      mi.unit,
+      li.action,
+      li.quantity,
+      li.unitCostEgp,
+      li.unitPriceEgp,
+      li.vatRatePct,
+      li.preparationRequired,
+      li.notes,
+      li.isActive,
+      mi.isActive itemIsActive
+    FROM tas_maintenance_interval_items li
+    JOIN tas_maintenance_items mi ON mi.id=li.itemId
+    WHERE li.intervalId=${input.maintenanceIntervalId}
+      AND li.isActive=1
+      AND mi.isActive=1
+    ORDER BY li.sortOrder ASC, li.id ASC
+    FOR UPDATE
+  `);
+
+  const packageData = summarizeTASMaintenanceLines(((packageRows as any)[0] ?? []) as AnyRow[]);
+
+  for (const line of packageData.lines) {
+    await tx.execute(sql`
+      INSERT INTO tas_service_booking_items (
+        bookingId, intervalItemId, itemId, itemCode, itemName, itemType,
+        action, unit, quantity, unitCostEgp, unitPriceEgp, vatRatePct,
+        preparationRequired, notes
+      ) VALUES (
+        ${input.bookingId},
+        ${Number(line.intervalItemId)},
+        ${Number(line.itemId)},
+        ${line.itemCode ?? null},
+        ${line.itemName},
+        ${line.itemType},
+        ${line.action},
+        ${line.unit ?? "unit"},
+        ${line.quantity},
+        ${line.unitCostEgp},
+        ${line.unitPriceEgp},
+        ${line.vatRatePct},
+        ${line.preparationRequired ? 1 : 0},
+        ${line.notes ?? null}
+      )
+    `);
+  }
+
+  return packageData;
+};
