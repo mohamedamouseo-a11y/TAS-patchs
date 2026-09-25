@@ -12,8 +12,8 @@ async function main() {
   requireText("server/tasDb.ts", "schedulerVersion: 1");
   requireText("server/tasDb.ts", 'laneType === "bay"');
   requireText("server/routers.ts", "getTASServiceScheduler");
-  requireText("client/src/components/tas/TASServiceScheduler.tsx", "UNASSIGNED");
-  requireText("client/src/components/tas/TASServiceScheduler.tsx", "Bay exception");
+  requireText("client/src/components/tas/TASServiceScheduler.tsx", "booking.laneType === 'unassigned'");
+  requireText("client/src/components/tas/TASServiceScheduler.tsx", "booking.laneType === 'exception'");
   requireText("client/src/pages/tas/TASServicePage.tsx", "<TASServiceScheduler />");
 
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
