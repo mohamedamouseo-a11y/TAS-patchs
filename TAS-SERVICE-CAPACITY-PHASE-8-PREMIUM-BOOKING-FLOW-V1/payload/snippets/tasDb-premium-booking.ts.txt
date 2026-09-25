@@ -1,0 +1,334 @@
+export const getTASAppointments = async (filters?: AnyRow) => {
+  const [rows, bays, plans, intervals] = await Promise.all([
+    listTASServiceBookings({
+      branchId: filters?.branchId,
+      status: filters?.status,
+      startDate: filters?.dateFrom ? new Date(filters.dateFrom).toISOString().slice(0, 10) : undefined,
+      endDate: filters?.dateTo ? new Date(filters.dateTo).toISOString().slice(0, 10) : undefined,
+      limit: 100,
+    }),
+    listTASServiceBays({ includeInactive: true }),
+    listTASMaintenancePlans({ includeInactive: true }),
+    listTASMaintenanceIntervals({ includeInactive: true }),
+  ]);
+
+  const bayMap = new Map<number, AnyRow>(bays.map((bay: AnyRow) => [Number(bay.id), bay]));
+  const planMap = new Map<number, AnyRow>(plans.map((plan: AnyRow) => [Number(plan.id), plan]));
+  const intervalMap = new Map<number, AnyRow>(intervals.map((interval: AnyRow) => [Number(interval.id), interval]));
+
+  return rows.map((row: AnyRow) => {
+    const mapped = mapAppointment(row);
+    const bayId = Number(row.bayId ?? 0);
+    const bay = bayId > 0 ? bayMap.get(bayId) : null;
+    const maintenancePlanId = Number(row.maintenancePlanId ?? 0);
+    const maintenanceIntervalId = Number(row.maintenanceIntervalId ?? 0);
+    const plan = maintenancePlanId > 0 ? planMap.get(maintenancePlanId) : null;
+    const interval = maintenanceIntervalId > 0 ? intervalMap.get(maintenanceIntervalId) : null;
+
+    return {
+      ...mapped,
+      bayId: bayId > 0 ? bayId : null,
+      bayName: bay?.name ?? null,
+      bayCode: bay?.code ?? null,
+      bayIsActive: bay ? Number(bay.isActive) === 1 : null,
+      maintenancePlanName: plan?.name ?? null,
+      maintenancePlanCode: plan?.code ?? null,
+      maintenanceIntervalLabel: interval?.label ?? null,
+      maintenanceMileageKm: interval?.mileageKm ?? null,
+      plannedDurationMinutes: row.plannedDurationMinutes ?? interval?.durationMinutes ?? null,
+    };
+  });
+};
+
+const premiumSlotKey = (value: unknown) => {
+  const text = String(value ?? "").trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  return match ? `${match[1]}T${match[2]}` : "";
+};
+
+export const createTASAppointment = async (input: AnyRow) => {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const branchId = Number(input.branchId ?? 0);
+  const serviceTypeId = Number(input.serviceTypeId ?? 0);
+  if (!Number.isInteger(branchId) || branchId <= 0) throw new Error("Valid branchId is required");
+  if (!Number.isInteger(serviceTypeId) || serviceTypeId <= 0) throw new Error("Valid serviceTypeId is required");
+
+  const bookingMode = String(input.bookingMode ?? "") === "premium_v1" ? "premium_v1" : "legacy";
+  const parsedStart = input.startAt ? new Date(input.startAt) : null;
+  const start = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
+  if (!start) throw new Error("Valid appointment startAt is required");
+
+  const vehicleId = Number(input.vehicleId ?? 0);
+  const mileageKm = input.mileageKm == null || input.mileageKm === "" ? null : Math.trunc(Number(input.mileageKm));
+  if (mileageKm !== null && (!Number.isInteger(mileageKm) || mileageKm < 0 || mileageKm > 2000000)) {
+    throw new Error("Mileage must be between 0 and 2000000 km");
+  }
+
+  let maintenanceMapping: AnyRow | null = null;
+  let maintenanceInterval: AnyRow | null = null;
+  let maintenancePlanId: number | null = null;
+
+  const maintenanceIntervalId = Number(input.maintenanceIntervalId ?? 0);
+  if (maintenanceIntervalId > 0) {
+    if (!Number.isInteger(vehicleId) || vehicleId <= 0) throw new Error("Vehicle is required for a maintenance booking");
+    if (mileageKm === null) throw new Error("Mileage is required for a maintenance booking");
+
+    const resolution = await resolveTASMaintenanceMileage({
+      vehicleId,
+      mileageKm,
+      powertrain: input.powertrain,
+      variant: input.variant,
+      year: input.vehicleYear == null || input.vehicleYear === "" ? undefined : Number(input.vehicleYear),
+    });
+
+    if (resolution.ambiguous) throw new Error("Maintenance mapping is ambiguous; resolve the vehicle mapping before booking");
+    if (!resolution.mapping) throw new Error("No deterministic maintenance mapping is available for this vehicle");
+
+    const requestedMappingId = Number(input.maintenanceMappingId ?? resolution.mapping.id);
+    if (requestedMappingId !== Number(resolution.mapping.id)) {
+      throw new Error("Selected maintenance mapping does not match the resolved vehicle mapping");
+    }
+
+    maintenanceMapping = resolution.mapping;
+    maintenancePlanId = Number(maintenanceMapping.planId);
+
+    const intervals = await listTASMaintenanceIntervals({ planId: maintenancePlanId, includeInactive: false });
+    maintenanceInterval = intervals.find((row: AnyRow) => Number(row.id) === maintenanceIntervalId) ?? null;
+    if (!maintenanceInterval) throw new Error("Selected maintenance interval does not belong to the resolved active plan");
+  }
+
+  const serviceTypes = await getTASServiceTypes();
+  const serviceTypeForDuration = serviceTypes.find((row: AnyRow) => Number(row.id) === serviceTypeId);
+  const plannedDurationMinutes = Math.max(
+    15,
+    toNumber(maintenanceInterval?.durationMinutes, toNumber(serviceTypeForDuration?.durationMinutes, 60)),
+  );
+
+  if (bookingMode === "premium_v1") {
+    const requestedSlotKey = premiumSlotKey(input.startAt);
+    if (!requestedSlotKey) throw new Error("Premium booking requires a generated availability slot");
+
+    const slotDate = requestedSlotKey.slice(0, 10);
+    const availableSlots = await getAvailableTASSlots({
+      day: new Date(`${slotDate}T12:00:00`),
+      branchId,
+      serviceTypeId,
+      maintenanceIntervalId: maintenanceInterval ? Number(maintenanceInterval.id) : null,
+    });
+
+    const selectedSlot = availableSlots.find((slot: AnyRow) => premiumSlotKey(slot.startAt) === requestedSlotKey);
+    if (!selectedSlot) throw new Error("Selected time is outside the current booking schedule");
+    if (Number(selectedSlot.availableCapacity ?? 0) <= 0) throw new Error("Selected time is no longer available");
+    if (Number(selectedSlot.durationMinutes) !== plannedDurationMinutes) {
+      throw new Error("Selected slot duration no longer matches the booking context");
+    }
+  }
+
+  const parsedEnd = input.endAt ? new Date(input.endAt) : null;
+  const legacyExplicitEnd = parsedEnd && !Number.isNaN(parsedEnd.getTime()) && parsedEnd > start ? parsedEnd : null;
+
+  return db.transaction(async (tx) => {
+    const branchRows = await tx.execute(sql`
+      SELECT id, name, isActive
+      FROM tas_branches
+      WHERE id = ${branchId}
+      LIMIT 1
+      FOR UPDATE
+    `);
+    const branch = ((branchRows as any)[0] ?? [])[0];
+    if (!branch) throw new Error("Branch not found");
+    if (Number(branch.isActive) !== 1) throw new Error("Branch is inactive");
+
+    const serviceRows = await tx.execute(sql`
+      SELECT id, name, durationMinutes, isActive
+      FROM tas_service_types
+      WHERE id = ${serviceTypeId}
+      LIMIT 1
+    `);
+    const serviceType = ((serviceRows as any)[0] ?? [])[0];
+    if (!serviceType) throw new Error("Service type not found");
+    if (Number(serviceType.isActive) !== 1) throw new Error("Service type is inactive");
+
+    let vehicle: AnyRow | null = null;
+    if (vehicleId > 0) {
+      const vehicleRows = await tx.execute(sql`
+        SELECT id, brand, model, year, isActive
+        FROM tas_vehicles
+        WHERE id = ${vehicleId}
+        LIMIT 1
+        FOR UPDATE
+      `);
+      vehicle = ((vehicleRows as any)[0] ?? [])[0] ?? null;
+      if (!vehicle) throw new Error("Vehicle not found");
+      if (Number(vehicle.isActive) !== 1) throw new Error("Vehicle is inactive");
+    }
+
+    if (maintenanceInterval) {
+      const contextRows = await tx.execute(sql`
+        SELECT
+          m.id mappingId,
+          m.planId,
+          m.vehicleId,
+          m.isActive mappingActive,
+          p.isActive planActive,
+          i.id intervalId,
+          i.durationMinutes,
+          i.isActive intervalActive
+        FROM tas_maintenance_vehicle_mappings m
+        JOIN tas_maintenance_plans p ON p.id = m.planId
+        JOIN tas_maintenance_intervals i ON i.planId = p.id
+        WHERE m.id = ${Number(maintenanceMapping?.id)}
+          AND m.vehicleId = ${vehicleId}
+          AND i.id = ${Number(maintenanceInterval.id)}
+        LIMIT 1
+        FOR UPDATE
+      `);
+      const context = ((contextRows as any)[0] ?? [])[0];
+      if (!context || Number(context.mappingActive) !== 1 || Number(context.planActive) !== 1 || Number(context.intervalActive) !== 1) {
+        throw new Error("Maintenance booking context changed; refresh and select again");
+      }
+    }
+
+    const durationMinutes = plannedDurationMinutes;
+    const end = bookingMode === "premium_v1"
+      ? new Date(start.getTime() + durationMinutes * 60_000)
+      : (legacyExplicitEnd ?? new Date(start.getTime() + durationMinutes * 60_000));
+
+    const bayRows = await tx.execute(sql`
+      SELECT id, branchId, name, code, sortOrder
+      FROM tas_service_bays
+      WHERE branchId = ${branchId} AND isActive = 1
+      ORDER BY sortOrder ASC, id ASC
+      FOR UPDATE
+    `);
+    const activeBays = ((bayRows as any)[0] ?? []) as AnyRow[];
+    const activeBayIds = activeBays.map((bay) => Number(bay.id));
+
+    let selectedBay: AnyRow | null = null;
+    let assignmentMode: "auto_bay" | "legacy_no_bays" = "legacy_no_bays";
+    let legacyUnassignedLoad = 0;
+    let occupiedBayIds: number[] = [];
+
+    if (activeBays.length > 0) {
+      const overlapRows = await tx.execute(sql`
+        SELECT
+          b.id,
+          b.bayId,
+          b.startAt,
+          b.endAt,
+          b.preferredDate,
+          b.preferredTime,
+          COALESCE(b.plannedDurationMinutes, st.durationMinutes, 60) AS bookingDurationMinutes
+        FROM tas_service_bookings b
+        LEFT JOIN tas_service_types st ON st.id = b.serviceTypeId
+        WHERE b.branchId = ${branchId}
+          AND b.status NOT IN ('Cancelled','NoShow')
+          AND COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)) < ${end}
+          AND COALESCE(
+            b.endAt,
+            DATE_ADD(
+              COALESCE(b.startAt, TIMESTAMP(b.preferredDate, b.preferredTime)),
+              INTERVAL COALESCE(b.plannedDurationMinutes, st.durationMinutes, 60) MINUTE
+            )
+          ) > ${start}
+        FOR UPDATE
+      `);
+      const overlapping = ((overlapRows as any)[0] ?? []) as AnyRow[];
+      const activeSet = new Set(activeBayIds);
+
+      occupiedBayIds = Array.from(new Set(
+        overlapping
+          .map((row) => Number(row.bayId ?? 0))
+          .filter((bayId) => activeSet.has(bayId)),
+      )).sort((a, b) => a - b);
+
+      legacyUnassignedLoad = overlapping.filter((row) => !Number(row.bayId ?? 0)).length;
+
+      const selection = selectTASAutoBayCandidateForLoad({
+        activeBayIds,
+        occupiedBayIds,
+        legacyUnassignedLoad,
+      });
+
+      if (!selection.selectedBayId) {
+        throw new Error("No service Bay is available for the requested appointment time");
+      }
+
+      selectedBay = activeBays.find((bay) => Number(bay.id) === Number(selection.selectedBayId)) ?? null;
+      if (!selectedBay) throw new Error("Selected service Bay is no longer available");
+      assignmentMode = "auto_bay";
+    }
+
+    const preferredDate = premiumSlotKey(input.startAt).slice(0, 10) || start.toISOString().slice(0, 10);
+    const preferredTime = premiumSlotKey(input.startAt).slice(11, 16) || start.toISOString().slice(11, 16);
+    const bayId = selectedBay ? Number(selectedBay.id) : null;
+
+    const vehicleBrand = vehicle?.brand ?? input.vehicleBrand ?? null;
+    const vehicleModel = vehicle?.model ?? input.vehicleModel ?? null;
+    const vehicleYear = input.vehicleYear == null || input.vehicleYear === ""
+      ? (vehicle?.year ?? null)
+      : Number(input.vehicleYear);
+
+    const result = await tx.execute(sql`
+      INSERT INTO tas_service_bookings (
+        leadId, customerName, phone, vehicleBrand, vehicleModel, vehicleYear,
+        branchId, serviceTypeId, bayId,
+        vehicleId, mileageKm, maintenanceMappingId, maintenancePlanId, maintenanceIntervalId, plannedDurationMinutes,
+        preferredDate, preferredTime, startAt, endAt,
+        sourceChannel, notes, assignedTo, status, feedbackDueAt, feedbackStatus
+      )
+      VALUES (
+        ${input.leadId ?? null},
+        ${input.customerName ?? null},
+        ${input.customerPhone ?? input.phone ?? null},
+        ${vehicleBrand},
+        ${vehicleModel},
+        ${vehicleYear},
+        ${branchId},
+        ${serviceTypeId},
+        ${bayId},
+        ${vehicleId > 0 ? vehicleId : null},
+        ${mileageKm},
+        ${maintenanceMapping ? Number(maintenanceMapping.id) : null},
+        ${maintenancePlanId},
+        ${maintenanceInterval ? Number(maintenanceInterval.id) : null},
+        ${durationMinutes},
+        ${preferredDate},
+        ${preferredTime},
+        ${start},
+        ${end},
+        ${input.sourceChannel ?? "CRM"},
+        ${input.serviceNotes ?? input.notes ?? null},
+        ${input.assignedUserId ?? input.assignedTo ?? null},
+        ${input.status ?? "PendingConfirmation"},
+        DATE_ADD(NOW(), INTERVAL 48 HOUR),
+        'Pending'
+      )
+    `);
+
+    const id = Number((result as any)[0]?.insertId ?? 0);
+    if (!id) throw new Error("Failed to create service appointment");
+
+    return {
+      id,
+      bayId,
+      bayName: selectedBay?.name ?? null,
+      bayCode: selectedBay?.code ?? null,
+      assignmentMode,
+      bookingMode,
+      durationMinutes,
+      durationSource: maintenanceInterval ? "maintenance_interval" : "service_type",
+      vehicleId: vehicleId > 0 ? vehicleId : null,
+      mileageKm,
+      maintenanceMappingId: maintenanceMapping ? Number(maintenanceMapping.id) : null,
+      maintenancePlanId,
+      maintenanceIntervalId: maintenanceInterval ? Number(maintenanceInterval.id) : null,
+      startAt: start.toISOString(),
+      endAt: end.toISOString(),
+      legacyUnassignedLoad,
+      occupiedBayIds,
+    };
+  });
+};
