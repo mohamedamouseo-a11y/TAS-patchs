@@ -185,15 +185,20 @@ if "  getTASServiceTypesAdmin,\n" not in text:
     )
 
 if "    listTypesAdmin:" not in text:
-    text = replace_once(
-        text,
-        "    listTypes: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASServiceTypes()),\n    createType: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASServiceType(input ?? {}) })),\n",
+    route_anchor = (
+        "    listTypes: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASServiceTypes()),\n"
+        "    createType: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASServiceType(input ?? {}) })),\n"
+    )
+    route_replacement = (
         "    listTypes: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASServiceTypes()),\n"
         "    listTypesAdmin: tasPermissionProcedure.input(tasAnyInput).query(async () => getTASServiceTypesAdmin()),\n"
         "    createType: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => ({ id: await createTASServiceType(input ?? {}) })),\n"
-        "    updateType: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASServiceType(Number(input?.id ?? input?.serviceTypeId), input ?? {})),\n",
-        "service type routes",
+        "    updateType: tasPermissionProcedure.input(tasAnyInput).mutation(async ({ input }) => updateTASServiceType(Number(input?.id ?? input?.serviceTypeId), input ?? {})),\n"
     )
+    route_count = text.count(route_anchor)
+    if route_count != 2:
+        raise RuntimeError(f"service type routes: expected 2 mirrored anchors, found {route_count}")
+    text = text.replace(route_anchor, route_replacement)
 write(rel, text)
 
 # client page
