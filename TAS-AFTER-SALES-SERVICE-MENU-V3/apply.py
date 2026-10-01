@@ -44,8 +44,8 @@ def patch_layout(path: Path):
       items: compactItems(
         customSidebarItem("/tas/service", isRTL ? "نظرة عامة" : "Overview", <Activity size={15} />, TAS_SERVICE_ROLES),
         customSidebarItem("/tas/service/book", isRTL ? "حجز صيانة جديد" : "New Service Booking", <Calendar size={15} />, TAS_SERVICE_ROLES),
-        customSidebarItem("/tas/service/appointments", isRTL ? "مواعيد الصيانة" : "Service Appointments", <CalendarClock size={15} />, TAS_SERVICE_ROLES),
-        customSidebarItem("/tas/service/availability", isRTL ? "الجدولة والإتاحة" : "Availability & Scheduler", <Clock size={15} />, TAS_SERVICE_ROLES),
+        customSidebarItem("/tas/service/appointments", isRTL ? "مواعيد الصيانة" : "Service Appointments", <Calendar size={15} />, TAS_SERVICE_ROLES),
+        customSidebarItem("/tas/service/availability", isRTL ? "الجدولة والإتاحة" : "Availability & Scheduler", <Activity size={15} />, TAS_SERVICE_ROLES),
         customSidebarItem("/tas/service/maintenance-plans", isRTL ? "خطط الصيانة" : "Maintenance Plans", <ClipboardList size={15} />, TAS_SERVICE_ROLES),
         customSidebarItem("/tas/service/vehicle-mapping", isRTL ? "ربط السيارات" : "Vehicle Mapping", <Car size={15} />, TAS_SERVICE_ROLES),
         customSidebarItem("/tas/service/service-bays", isRTL ? "أماكن الخدمة" : "Service Bays", <Wrench size={15} />, TAS_SERVICE_ROLES),
