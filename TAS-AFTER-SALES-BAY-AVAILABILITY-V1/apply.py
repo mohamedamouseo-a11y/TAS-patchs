@@ -25,7 +25,7 @@ def patch_service_page(path: Path):
     old_render = "{section === 'availability' && <TASAvailabilityEngineV2Panel />}"
     new_render = """{section === 'availability' && (
           <>
-            // TAS_AFTER_SALES_BAY_AVAILABILITY_V1
+            {/* TAS_AFTER_SALES_BAY_AVAILABILITY_V1 */}
             <TASServiceScheduler />
             <TASAvailabilityEngineV2Panel />
           </>
