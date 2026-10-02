@@ -2,7 +2,7 @@
 from pathlib import Path
 import sys
 
-PAGE_MARKER = "// TAS_AFTER_SALES_BAY_AVAILABILITY_V1"
+PAGE_MARKER = "TAS_AFTER_SALES_BAY_AVAILABILITY_V1"
 SCHED_MARKER = "{/* TAS_AFTER_SALES_BAY_AVAILABILITY_LEGEND_V1 */}"
 
 def patch_service_page(path: Path):
